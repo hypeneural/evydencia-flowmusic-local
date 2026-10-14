@@ -153,3 +153,18 @@ def test_live_queue_is_disabled_by_default(environment, monkeypatch):
     client, h = environment
     monkeypatch.delenv("FLOWMUSIC_ALLOW_LIVE")
     assert client.post("/v1/music/jobs", headers=h, json=request()).json()["status"] == "auth_required"
+
+
+def test_two_pending_jobs_cannot_run_simultaneously(environment):
+    client, h = environment
+    a, b = request(), request()
+    assert client.post("/v1/music/jobs", headers=h, json=a).status_code == 202
+    assert client.post("/v1/music/jobs", headers=h, json=b).status_code == 202
+    first = queue.claim()
+    assert first is not None
+    # Even distinct processes must not start the second job while one is in flight.
+    assert queue.claim() is None
+    queue.finish(first["id"], "completed", [{"path": "simulated", "sha256": "fake"}])
+    second = queue.claim()
+    assert second is not None
+    assert second["id"] != first["id"]

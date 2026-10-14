@@ -107,6 +107,9 @@ def claim() -> dict | None:
     """BEGIN IMMEDIATE provides single-consumer claim even with distinct processes."""
     with api.db() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        # Cross-process single-flight: never claim while another job is submitting.
+        if conn.execute("SELECT 1 FROM jobs WHERE run_mode='cli' AND state='submitting' LIMIT 1").fetchone():
+            return None
         row = conn.execute(
             """SELECT * FROM jobs WHERE state='queued' AND run_mode='cli'
                AND approved_live=1 ORDER BY created_at, rowid LIMIT 1"""
