@@ -1,0 +1,6 @@
+# Audited upstream candidates
+Primary reference: https://github.com/deluxebear/flowmusic-cli commit 08491dc3319ae9f530c5c05c431196bbbbb10607; MIT, CLI with generation, model selection, lyrics, credits and downloads. 15 unit tests reportedly passed in upstream Actions 2026-10-10, but no authenticated generation evidence. Its login uses Unix-oriented browser commands and caches rotating refresh tokens; concurrency and ambiguous POST retry behavior require remediation before live.
+Alternative Python: https://github.com/south1907/flowmusic-toolkit commit 4052207077089368ba329b9ca389a74703094cd1; FastAPI + Chrome extension, but 2026-09-27 CI fails due to Makefile expecting .venv/bin/ruff. Its local routes lack API authentication.
+Go: https://github.com/genz27/FlowMusic2API commit 34296d89e830e42b1b9582215404c7c5fae2ed27; broader API but default bind 0.0.0.0 and dev credentials; excessive for one Windows local account.
+**Selection**: do not copy all three; pin only flowmusic-cli under ignored vendor/ for local inspection. The current Python API uses mock only, with no hidden automatic calls.
+Live release gates: review service terms, obtain authorization, Windows login test, model/credits read-only check, persistent one-worker queue, safe non-repeatable POST semantics, audio validation with ffprobe, tests on Windows and actual consented end-to-end run.
