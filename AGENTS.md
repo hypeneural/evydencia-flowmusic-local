@@ -1,25 +1,26 @@
-# Evydencia FlowMusic Local | AI-FIRST MVP (Gemini 3.8 Flash)
+# Evydencia FlowMusic Local — Gemini 3.8 Flash | AI-FIRST MVP
+Goal: deliver **one real, observable Windows experiment at a time** with minimal edits. Independent repo: never modify CRM / Workflow.
 
-Goal: deliver **one real, observable Windows MVP experiment at a time**, not an oversized test framework. This project is standalone; do not edit Workflow/CRM.
+## Decision loop
+1. Read this file; use ONE relevant skill from `.agents/skills/`, then only affected code.
+2. Hypothesis -> one focused check / one explicitly approved live request -> redacted ledger/event evidence -> next action.
+3. Do not run the full suite after every change; use targeted tests and Windows smoke before PR merge.
 
-## Operating loop (always)
-1. Read this file; pick **one** relevant skill from `.agents/skills/` and **only affected code**.
-2. State the single hypothesis, expected signal and stop condition in one sentence.
-3. Make the smallest safe change, run **one focused check or real supervised probe**, and inspect redacted logs.
-4. Report: command, result, evidence path, problem/next action. Repeat only when needed. Do not rerun the whole suite after each edit.
+## Core controls
+- API default = mock. Live requires `start.ps1 -EnableLive` **and** `approve_live=true` on each job.
+- One CLI process / one active generation; SQLite queue FIFO; max 25 pending.
+- A failed/uncertain provider submission -> `needs_review`, queue **stops**. Never auto-retry or reuse a prior request ID; manually reconcile based on provider library.
+- Do not print/store account tokens, cookies, OAuth URLs, raw provider responses or customer media in Git or external logs.
+- No bypass of CAPTCHA, 403/429, platform quotas, or access limits. Terms must permit selected automation; otherwise stop.
+- Scripts are Windows-local. No Docker/Redis/Celery/multi-account unless strong evidence justifies it.
+- Never merge PR automatically or touch main.
 
-## Critical boundaries
-- No real Google request without an explicit operator choice of `account` or `generate` in the one-shot MVP tool and explicit verification of applicable terms/credit budget.
-- Do not bypass CAPTCHA, 403, 429, platform limits or account restrictions. Never print/copy OAuth tokens, URLs with auth codes, cookies, prompt contents or signed media URLs into logs, git or chat.
-- An ambiguous upstream POST is **needs_review**: never automatically retry or spend credits twice. Same `request_id` must not regenerate.
-- Pin upstream source; localhost only; one operator/process; never modify `main` or merge a PR automatically.
-- Real audio proof is **distinct** from mock tests. Never claim mock = real.
-- No extra dashboards, Docker, parallel agents, all-repo scans or generic refactors without evidence.
+## Where to work
+- `app/main.py`: FastAPI contracts and original mock service.
+- `app/queue.py`: durable claim + single worker + events and reconciliation.
+- `scripts/mvp_probe.py`: already-real one-shot generator; don't reimplement or refactor without proven need.
+- `docs/API_QUEUE.md`: API and queue contract.
+- `tests/test_queue.py`: fake provider/SQLite queue unit checks, no Google calls.
+- `.agents/skills/flowmusic-mvp/`: one-shot probe; `.agents/skills/flowmusic-local/`: API/queue repair.
 
-## Map
-- `/flowmusic-mvp`: one-shot Windows check/account/real song + safe logs.
-- `/flowmusic-local`: targeted API maintenance.
-- `/flowmusic-codegraph`: dependency tracing **only if blocked**.
-- `docs/MVP_RUNBOOK.md`: executable commands and log schema.
-- `docs/SECURITY.md`: secrets and release gates.
-- `agent.cmd`: optional safe diagnostics, not the Antigravity context file.
+Report concise: SHA, actual command, state, event evidence, next action. Distinguish simulated CI and authenticated Windows proof.

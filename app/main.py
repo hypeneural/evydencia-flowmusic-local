@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -51,6 +52,7 @@ class MusicRequest(BaseModel):
     instrumental: bool = False
     duration_seconds: int = Field(default=120, ge=60, le=600)
     output_format: str = Field(default="wav", pattern=r"^(wav|m4a|mp3)$")
+    approve_live: bool = False
 
 @contextmanager
 def db():
@@ -95,9 +97,15 @@ def bootstrap() -> None:
 @asynccontextmanager
 async def life(_app: FastAPI):
     bootstrap()
-    yield
+    from app import queue
+    queue.migrate()
+    queue.start()
+    try:
+        yield
+    finally:
+        queue.stop()
 
-app = FastAPI(title="Evydencia FlowMusic Local", version="0.1.1", lifespan=life)
+app = FastAPI(title="Evydencia FlowMusic Local", version="0.2.0", lifespan=life)
 
 def auth(x_local_token: str | None = Header(default=None)) -> None:
     try:
@@ -129,11 +137,9 @@ def health():
 
 @app.get("/v1/music/status", dependencies=[Depends(auth)])
 def status():
-    return {
-        "provider": get_provider(),
-        "live_enabled": False,
-        "note": "Live generation disabled until terms and Windows validation",
-    }
+    from app import queue
+    return {"provider": get_provider(), **queue.overview(),
+            "note": "Live queue only with server enablement and per-job approval"}
 
 def make_mock_artifact(job_id: str, prompt: str) -> dict:
     """Publish the mock artifact atomically; never pretend it is audio."""
@@ -154,6 +160,9 @@ def make_mock_artifact(job_id: str, prompt: str) -> dict:
 def create(req: MusicRequest):
     payload = json.dumps(req.model_dump(), ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    from app import queue
+    if queue.enabled():
+        return queue.create_live(req, digest, payload)
     job_id = str(uuid.uuid4())
     with MUTEX:
         with db() as connection:
@@ -193,6 +202,32 @@ def create(req: MusicRequest):
             )
     return result(get_row(job_id))
 
+
+@app.get("/v1/music/jobs", dependencies=[Depends(auth)])
+def list_jobs(limit: int = 30):
+    if not 1 <= limit <= 100:
+        raise HTTPException(422, "limit must be 1..100")
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT * FROM jobs ORDER BY created_at DESC,rowid DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return {"jobs": [result(row) for row in rows]}
+
+@app.get("/v1/music/queue", dependencies=[Depends(auth)])
+def queue_status():
+    from app import queue
+    return queue.overview()
+
+@app.get("/v1/music/jobs/{job_id}/events", dependencies=[Depends(auth)])
+def job_events(job_id: str):
+    get_row(job_id)
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT event,state,created_at FROM job_events WHERE job_id=? ORDER BY id LIMIT 200",
+            (job_id,),
+        ).fetchall()
+    return {"events": [dict(row) for row in rows]}
+
 @app.get("/v1/music/jobs/{job_id}", dependencies=[Depends(auth)])
 def get_job(job_id: str):
     return result(get_row(job_id))
@@ -203,6 +238,25 @@ def artifacts(job_id: str):
     if record["status"] != "completed":
         raise HTTPException(409, "Not completed")
     return record["result"]
+
+class Reconciliation(BaseModel):
+    resolution: Literal["abandoned", "completed"]
+    confirmed_manual_review: bool = False
+
+
+@app.post("/v1/music/jobs/{job_id}/reconcile", dependencies=[Depends(auth)])
+def reconcile_job(job_id: str, body: Reconciliation):
+    if not body.confirmed_manual_review:
+        raise HTTPException(403, "Manual review confirmation required")
+    from app import queue
+    return queue.reconcile(job_id, body.resolution)
+
+
+@app.post("/v1/music/queue/resume", dependencies=[Depends(auth)])
+def resume_queue():
+    from app import queue
+    return queue.resume()
+
 
 @app.get("/v1/music/credits", dependencies=[Depends(auth)])
 def credits():

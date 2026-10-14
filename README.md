@@ -1,44 +1,24 @@
-# Evydencia FlowMusic Local — AI-FIRST / MVP Windows
+# Evydencia FlowMusic Local — MVP Windows, API + fila
 
-Serviço independente do Python Workflow, com **validação real, execução supervisionada e logs claros**. Não é necessário construir mais infraestrutura antes de comprovar uma geração. O FastAPI permanece um sandbox mock para validar o contrato; o caminho de MVP real usa **um CLI fixado, chamado explicitamente pelo Windows**, sem integrar credenciais ao CRM.
+O MVP real no Windows já foi demonstrado pelo operador: geração instrumental Lyria 3.5 com WAV e consumo de créditos. **Este repositório não fornece uma API oficial Google**, apenas integra de forma controlada o cliente open-source fixado `deluxebear/flowmusic-cli`.
 
-## Caminho curto para o Antigravity 3.8 Flash
-- Leia somente `AGENTS.md`, invoque `/flowmusic-mvp` e veja `docs/MVP_RUNBOOK.md`.
-- Uma hipótese -> uma execução -> um registro JSONL -> uma correção. Evite quatro matrizes de teste a cada alteração.
-- `agent.cmd` roda **checagem rápida, sem Google**. `agent.cmd test` executa suite Python + testes Node apenas sob demanda.
-- `/flowmusic-local` cuida da API mock quando necessário; `/flowmusic-codegraph` apenas para bugs transversais.
-
-## Instalação
+## Rápido no Windows
 ```powershell
-git clone https://github.com/hypeneural/evydencia-flowmusic-local.git
-cd evydencia-flowmusic-local
 git fetch origin
-git switch --track origin/feat/windows-local-engine-foundation
-powershell -ExecutionPolicy Bypass -File scripts/windows/install.ps1
+git switch feat/windows-local-engine-foundation
+git pull --ff-only
 .\agent.cmd
+.\scripts\windows\start.ps1
 ```
-O instalador fixa `deluxebear/flowmusic-cli` (MIT) no commit `08491dc3319ae9f530c5c05c431196bbbbb10607`; `vendor/`, `data/` e sessões são ignorados pelo Git.
+O comando sem parâmetros abre API **mock** em `http://127.0.0.1:8765/docs` sem créditos. `agent.cmd` é diagnóstico rápido; `agent.cmd test` roda a suíte completa somente se necessário.
 
-## Teste real supervisionado
-Apenas após verificar os termos aplicáveis e o custo de crédito, consulte `docs/MVP_RUNBOOK.md`:
+## Fila real — somente se autorizada
+Após a decisão consciente de uso da conta e dos créditos, o operador pode iniciar:
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/mvp.ps1 -Mode login
-powershell -ExecutionPolicy Bypass -File scripts/windows/mvp.ps1 -Mode account
-powershell -ExecutionPolicy Bypass -File scripts/windows/mvp.ps1 -Mode generate -RequestId natal-mvp-001 -Prompt 'Trilha natalina suave' -Instrumental -ApproveLive
+.\scripts\windows\start.ps1 -EnableLive
 ```
-`-Mode generate` **pode consumir créditos** e requer `-ApproveLive`; nunca é invocado pelo install, boot, doctor ou CI. Logs resumidos: `data/mvp/events.jsonl`; relatório da tentativa: `data/mvp/ledger/<id>.json`. Em timeout/erro ambíguo, o script preserva um bloqueio para evitar disparos sucessivos; consulte a biblioteca antes de liberar manualmente.
+Isso não gera música sozinho. Cada `POST /v1/music/jobs` precisa do header `X-Local-Token` e de `approve_live=true`. Um worker recupera os jobs aprovados em ordem, dispara o `mvp_probe.py` **uma vez**, registra ledger/artefatos e suspende toda a fila em resultado incerto. Não reutilizar `natal-mvp-001` (já consumido no teste anterior).
 
-**Importante:** o fluxo usa operações web internas não documentadas; não é uma API oficial garantida. AI Pro inclui o Flow Music Plus, mas assinatura não equivale a autorização automática para automatizar esse protocolo.
+**Documentação operacional completa e exemplo HTTP:** [docs/API_QUEUE.md](docs/API_QUEUE.md). Consulte também [docs/MVP_RUNBOOK.md](docs/MVP_RUNBOOK.md), [docs/CODEGRAPH.md](docs/CODEGRAPH.md) e [docs/SECURITY.md](docs/SECURITY.md).
 
-## API sandbox (opcional)
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/start.ps1
-```
-Swagger em `http://127.0.0.1:8765/docs`; API mock protege rotas com token local `data/local-token.txt`. Nenhum áudio é produzido na API mock.
-
-## Referências
-- `AGENTS.md`, `.agents/skills/`, `.agents/rules/`, `.agents/agents/`: personalização enxuta para Antigravity.
-- `docs/MVP_RUNBOOK.md`, `docs/ANTIGRAVITY_OPTIMIZATION.md`: experimento real e organização.
-- `docs/CODEGRAPH.md`: arquitetura atual e fronteira do upstream.
-- `docs/SECURITY.md`: sessões e bloqueios.
-- `docs/UPSTREAM_AUDIT.md`: decisões sobre reuso do cliente.
+**Sem novas assinaturas:** Python, SQLite, FastAPI e upstream MIT. A disponibilidade e a permissão dos endpoints privados podem mudar; AI Pro não implica autorização de automação desassistida.

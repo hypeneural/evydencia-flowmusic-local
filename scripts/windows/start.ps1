@@ -1,5 +1,18 @@
+param([switch]$EnableLive)
 $ErrorActionPreference='Stop'
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot '../..'))
-if (!(Test-Path .venv/Scripts/python.exe)) { throw 'Run install.ps1 first' }
-if ($env:FLOWMUSIC_PROVIDER -and $env:FLOWMUSIC_PROVIDER -ne 'mock') { throw 'Live provider is disabled in this staging revision' }
+if (!(Test-Path .venv/Scripts/python.exe)) { throw 'Execute install.ps1 antes.' }
+if ($EnableLive) {
+  if (!(Test-Path vendor/flowmusic-cli/bin/flowmusic.mjs)) { throw 'CLI upstream nao instalado.' }
+  if (!(Test-Path data/flowmusic-session/session.json)) { throw 'Sessao nao encontrada. Execute mvp.ps1 -Mode login.' }
+  $env:FLOWMUSIC_PROVIDER = 'cli'
+  $env:FLOWMUSIC_ALLOW_LIVE = 'true'
+  Write-Warning 'FILA REAL ATIVA: somente jobs com approve_live=true podem consumir creditos.'
+  Write-Warning 'Uso de endpoints nao oficiais exige validacao dos termos. Nao use workers adicionais.'
+} else {
+  $env:FLOWMUSIC_PROVIDER = 'mock'
+  $env:FLOWMUSIC_ALLOW_LIVE = 'false'
+  Write-Host 'API simulada, sem consumo de creditos.'
+}
 & .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --workers 1
+exit $LASTEXITCODE

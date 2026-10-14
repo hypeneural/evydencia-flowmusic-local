@@ -1,6 +1,8 @@
 ---
 name: flowmusic-local
-description: Makes small, evidence-driven fixes to the Windows FastAPI mock/local music service and its API without unrelated refactors or large test batches.
+description: Audit, run and repair localhost FastAPI SQLite FIFO generation queue on Windows; focused checks, logs, idempotency, manual reconciliation.
 ---
-# Local API maintenance
-Read AGENTS.md. Inspect the relevant call path in `app/main.py` and one targeted test. Make the smallest fix, execute one focused check (`python -m pytest -q tests/test_api.py`) only if code changed, and examine results. Full tests only before merge/release or for broad changes. Do not conflate mock service with real Google music generation.
+# Local API and queue
+Follow AGENTS.md. Inspect only `app/main.py`, `app/queue.py` and focused `tests/test_queue.py`; avoid upstream code unless failure points there.
+Workflow: one failure -> inspect protected `/v1/music/jobs/{id}/events` and local MVP ledger -> minimal fix -> one targeted offline test -> local supervised request if explicitly authorized.
+Default mock. Live requires `start.ps1 -EnableLive` and individual `approve_live=true`. Stop on needs_review; never requeue or delete lock automatically.
