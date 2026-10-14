@@ -1,25 +1,30 @@
 # Evydencia FlowMusic Local
 
-Independent Windows music-service foundation for eventual integration with Evydencia Python Workflow. **Current revision is MOCK ONLY and does not generate audio**. This avoids consuming Google AI Pro credits before permissions, safety and Windows validation.
+An independent, **mock-first** Windows music-job API scaffold, intended for later connection to Evydencia's Python Workflow. **No real audio or AI Pro credits are used.** The pinned open-source `flowmusic-cli` is fetched for inspection/tests only; a Google consumer Flow Music private-endpoint integration is neither official nor enabled in this app.
 
-## Install and test
+## Windows — PR #1 branch
 ```powershell
 git clone https://github.com/hypeneural/evydencia-flowmusic-local.git
 cd evydencia-flowmusic-local
+git fetch origin
+git switch --track origin/feat/windows-local-engine-foundation
 powershell -ExecutionPolicy Bypass -File scripts/windows/install.ps1
 .\agent.cmd
 powershell -ExecutionPolicy Bypass -File scripts/windows/start.ps1
 ```
-Visit http://127.0.0.1:8765/docs . A secret token is generated at `data/local-token.txt`; use HTTP header `X-Local-Token` to call protected routes. Do not share this token.
 
-The Windows install script fetches ONLY the pinned MIT-licensed `deluxebear/flowmusic-cli` upstream (commit `08491dc3319ae9f530c5c05c431196bbbbb10607`) into ignored `vendor/` for inspection and executes its 15 unit tests. No login or real generation is performed.
+Open `http://127.0.0.1:8765/docs`; protected API requests require `X-Local-Token` from local `data/local-token.txt`. Never paste this token into chat, logs or a PR.
 
-## Source map
-- `app/main.py`: FastAPI localhost (127.0.0.1), deterministic SQLite connection cleanup, Windows NTFS ACL token protection, SQLite idempotency, mock artifact JSON.
-- `tests/test_api.py`: Comprehensive regression test suite (health, status, credits, lifecycle, idempotency, 409 payload conflict, 404 handling, crash recovery, and safety gates).
-- `scripts/windows/`: `install.ps1`, `doctor.ps1`, `start.ps1` (hardened for Windows PowerShell, `py`/`python` runtime resolution, and `npm.cmd`).
-- `AGENTS.md`, `.agent/skills/`, `.agent/workflows/`: Antigravity instructions and local workflow rules.
-- `docs/UPSTREAM_AUDIT.md`: Upstream technical audit, Windows compatibility findings, and terms analysis.
-- `docs/OPERATIONS.md`: API specifications, security, and single-worker operational architecture.
+The installer clones only `deluxebear/flowmusic-cli` into gitignored `vendor/`, pins commit `08491dc3319ae9f530c5c05c431196bbbbb10607` and runs `npm test` without logging in.
 
-CI runs mock Python tests on Windows and Linux. This is a staging scaffold, not a claim of a working authenticated Lyria generator or officially supported consumer API.
+## Source / code graph
+- `app/main.py`: FastAPI, SQLite transactions, mock JSON artifacts, local token ACL.
+- `tests/test_api.py`: pytest fixture uses isolated temporary DB (never changes your operational `data/`).
+- `docs/CODEGRAPH.md`: API call graph, state transitions, upstream boundary.
+- `docs/SECURITY.md`: credentials, NTFS limitations, no-credit policy.
+- `docs/UPSTREAM_AUDIT.md`: pinned source, known compatibility gaps and official framework docs.
+- `AGENTS.md`, `.agents/skills/`: Antigravity Gemini Flash scoped instructions.
+- `scripts/windows/`: installer, doctor, localhost startup; `agent.cmd` runs diagnostics.
+
+## Limitations
+The mock API is suitable for verifying the HTTP contract and local operational behavior. It is **not yet a live music generator**. Remaining release gates: supported/authorized integration method, Windows OAuth verification, explicit live permission, crash-safe remote job tracking, FFprobe audio QA and recovery without duplicate credit charges.
