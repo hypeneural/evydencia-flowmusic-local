@@ -80,3 +80,13 @@ A fila limita a 25 pendentes, usa um worker sem concorrência e faz polling loca
 - FFprobe e qualidade musical ainda precisam de validação antes do Workflow consumir WAV; a fila atual revalida caminho, tamanho e SHA-256.
 - Prompts constam do SQLite local para recuperar jobs; proteger `data/` com NTFS ACL em máquinas compartilhadas.
 - O servidor FastAPI executa um worker interno no `lifespan`, mantido por um único processo Windows. Não inicie vários Uvicorn workers. <Link> não integra o Workflow automaticamente; consumo depende de comando explícito.
+
+
+## Perfis múltiplos e saldos — extensão da API
+`GET /v1/music/accounts` lista aliases, presença local da sessão, último saldo consultado, `checked_at` e `stale` (cache com mais de 30 minutos). A lista é ordenada pelos **saldos recentes conhecidos** para auxiliar escolha manual; não consulta Google em background.
+
+`POST /v1/music/jobs` aceita `account_profile` (alias; padrão `default`) além de `approve_live=true`. O perfil é persistido no payload do SQLite, exibido no retorno HTTP e inserido no ledger. Antes de finalizar, a fila confere o perfil do ledger e o SHA-256 do áudio.
+
+`request_id` continua global entre perfis. O mesmo ID+payload retorna o mesmo job mesmo se a sessão do perfil estiver temporariamente indisponível. Novos IDs exigem sessão existente. A seleção do perfil não muda depois da aceitação e **não existe fallback automático por falta de créditos ou falha do provedor**.
+
+O executor usa `FLOWMUSIC_HOME` individual; ver [ACCOUNTS.md](ACCOUNTS.md). Manter um worker global e não consultar saldos enquanto houver geração ativa. Os snapshots de saldo ficam em arquivos locais ignorados pelo Git, não numa nova tabela SQLite: isso evita migrar o banco já operacional.

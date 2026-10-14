@@ -10,6 +10,7 @@ import pytest
 
 from app import main as api
 from app import queue
+from app import profiles
 
 
 @pytest.fixture
@@ -17,6 +18,13 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "DATA", tmp_path)
     monkeypatch.setattr(api, "DB", tmp_path / "jobs.db")
     monkeypatch.setattr(api, "TOKEN", tmp_path / "local-token.txt")
+    monkeypatch.setattr(profiles, "DATA", tmp_path)
+    monkeypatch.setattr(profiles, "PROFILES", tmp_path / "flowmusic-profiles")
+    monkeypatch.setattr(profiles, "SNAPSHOTS", tmp_path / "account-snapshots")
+    # Isolated fixture only: never read or write real OAuth credentials in tests.
+    session = tmp_path / "flowmusic-session"
+    session.mkdir()
+    (session / "session.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("FLOWMUSIC_PROVIDER", "mock")
     monkeypatch.delenv("FLOWMUSIC_ALLOW_LIVE", raising=False)
     monkeypatch.setattr(queue, "BLOCKED", None)
@@ -81,7 +89,7 @@ def test_one_successful_worker_job_with_fake_audio(environment):
         ledger = api.DATA / "mvp" / "ledger"
         ledger.mkdir(parents=True)
         (ledger / (item["request_id"] + ".json")).write_text(
-            json.dumps({"request_id": item["request_id"], "state": "completed",
+            json.dumps({"request_id": item["request_id"], "state": "completed", "profile": item.get("account_profile", "default"),
                         "artifacts": [{"file": str(wav), "sha256": hashlib.sha256(wav.read_bytes()).hexdigest()}]}),
             encoding="utf-8",
         )
@@ -168,3 +176,33 @@ def test_two_pending_jobs_cannot_run_simultaneously(environment):
     second = queue.claim()
     assert second is not None
     assert second["id"] != first["id"]
+
+
+def test_profiles_sorted_by_fresh_credit_snapshot(environment):
+    client, headers = environment
+    second = profiles.session_dir("studio02")
+    second.mkdir(parents=True)
+    (second / "session.json").write_text("{}", encoding="utf-8")
+    profiles.save_snapshot("default", 120)
+    profiles.save_snapshot("studio02", 900)
+    listing = client.get("/v1/music/accounts", headers=headers)
+    assert listing.status_code == 200
+    accounts = listing.json()["profiles"]
+    assert [account["profile"] for account in accounts[:2]] == ["studio02", "default"]
+    assert listing.json()["automatic_failover"] is False
+
+
+def test_profile_explicit_and_existing_job_replay_without_session(environment):
+    client, headers = environment
+    profile = profiles.session_dir("studio03")
+    profile.mkdir(parents=True)
+    (profile / "session.json").write_text("{}", encoding="utf-8")
+    payload = {**request(), "account_profile": "studio03"}
+    posted = client.post("/v1/music/jobs", headers=headers, json=payload)
+    assert posted.status_code == 202
+    (profile / "session.json").unlink()
+    retried = client.post("/v1/music/jobs", headers=headers, json=payload)
+    assert retried.json()["job_id"] == posted.json()["job_id"]
+    blocked = client.post("/v1/music/jobs", headers=headers,
+                          json={**request(), "account_profile": "studio03"})
+    assert blocked.status_code == 409

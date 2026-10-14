@@ -1,24 +1,34 @@
-# Evydencia FlowMusic Local — MVP Windows, API + fila
+# Evydencia FlowMusic Local — Windows API + fila
 
-O MVP real no Windows já foi demonstrado pelo operador: geração instrumental Lyria 3.5 com WAV e consumo de créditos. **Este repositório não fornece uma API oficial Google**, apenas integra de forma controlada o cliente open-source fixado `deluxebear/flowmusic-cli`.
+Serviço independente com FastAPI, SQLite e flowmusic-cli fixado. Duas validações reais foram relatadas pelo Antigravity: `natal-mvp-001` via CLI e `natal-api-002` via HTTP/FIFO. Os áudios e credenciais ficam somente no Windows.
 
-## Rápido no Windows
+## Operação curta
 ```powershell
 git fetch origin
 git switch feat/windows-local-engine-foundation
 git pull --ff-only
 .\agent.cmd
-.\scripts\windows\start.ps1
+.\scripts\windows\mvp.ps1 -Mode accounts
 ```
-O comando sem parâmetros abre API **mock** em `http://127.0.0.1:8765/docs` sem créditos. `agent.cmd` é diagnóstico rápido; `agent.cmd test` roda a suíte completa somente se necessário.
 
-## Fila real — somente se autorizada
-Após a decisão consciente de uso da conta e dos créditos, o operador pode iniciar:
+Não há GitHub Actions. Testes/diagnósticos locais apenas conforme necessidade. `agent.cmd test` é opcional.
+
+## Perfis isolados e créditos
 ```powershell
+.\scripts\windows\mvp.ps1 -Mode login -Profile studio02
+.\scripts\windows\mvp.ps1 -Mode account -Profile studio02
+.\scripts\windows\mvp.ps1 -Mode accounts
+```
+
+`default` preserva a sessão antiga. Outros perfis usam `data/flowmusic-profiles/<alias>`. `GET /v1/music/accounts` retorna snapshots de crédito, ordenados do maior saldo **recente** para o menor, assinalando os desatualizados. A conta é escolhida explicitamente por `account_profile` no POST e nunca alternada automaticamente. Consulte [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+
+## API local
+```powershell
+.\scripts\windows\start.ps1
+# Somente quando conscientemente autorizado:
 .\scripts\windows\start.ps1 -EnableLive
 ```
-Isso não gera música sozinho. Cada `POST /v1/music/jobs` precisa do header `X-Local-Token` e de `approve_live=true`. Um worker recupera os jobs aprovados em ordem, dispara o `mvp_probe.py` **uma vez**, registra ledger/artefatos e suspende toda a fila em resultado incerto. Não reutilizar `natal-mvp-001` (já consumido no teste anterior).
 
-**Documentação operacional completa e exemplo HTTP:** [docs/API_QUEUE.md](docs/API_QUEUE.md). Consulte também [docs/MVP_RUNBOOK.md](docs/MVP_RUNBOOK.md), [docs/CODEGRAPH.md](docs/CODEGRAPH.md) e [docs/SECURITY.md](docs/SECURITY.md).
+`127.0.0.1:8765/docs`: API protegida por header `X-Local-Token` (arquivo `data/local-token.txt`). Cada pedido real exige `approve_live=true`. Fila bloqueada em resultados remotos incertos; não repetir usando outra conta.
 
-**Sem novas assinaturas:** Python, SQLite, FastAPI e upstream MIT. A disponibilidade e a permissão dos endpoints privados podem mudar; AI Pro não implica autorização de automação desassistida.
+Detalhes: [docs/API_QUEUE.md](docs/API_QUEUE.md), [docs/ACCOUNTS.md](docs/ACCOUNTS.md), [docs/SECURITY.md](docs/SECURITY.md). O uso de endpoints internos do provedor não é API oficial e depende dos termos aplicáveis.

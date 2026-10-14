@@ -79,3 +79,18 @@ This static graph is not proof of live generation, performance, safety of revers
 
 ## Current FIFO queue (v0.2)
 POST /v1/music/jobs -> SQLite UNIQUE(request_id) -> app/queue.py create_live -> claim (BEGIN IMMEDIATE, one submitting globally) -> mvp_probe -> local ledger + artifacts -> SHA256 verification -> completed or needs_review. A needs_review job blocks the queue until manual reconciliation; no automatic resubmission. See docs/API_QUEUE.md.
+
+
+## Fluxo por conta (MVP)
+```mermaid
+flowchart LR
+    Operator["Operador"] --> Cache["mvp.ps1 accounts / account por alias"]
+    Cache --> Profiles["app/profiles.py: sessão e snapshot"]
+    API["POST /v1/music/jobs account_profile"] --> SQLite["SQLite payload + request_id UNIQUE"]
+    SQLite --> Worker["app/queue.py worker único"]
+    Worker --> Probe["mvp_probe.py --profile"]
+    Probe --> Home["FLOWMUSIC_HOME isolado"]
+    Probe --> Ledger["Ledger perfil + WAV"]
+    Ledger --> Audit["Verificar perfil e SHA256"]
+```
+A consulta de saldo não agenda nem executa músicas e a ordenação não altera o `account_profile` dos jobs.

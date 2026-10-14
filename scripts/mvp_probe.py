@@ -21,12 +21,16 @@ ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / "vendor" / "flowmusic-cli"
 ENTRY = VENDOR / "bin" / "flowmusic.mjs"
 PIN = "08491dc3319ae9f530c5c05c431196bbbbb10607"
-SESSION = ROOT / "data" / "flowmusic-session"
+SESSION = ROOT / "data" / "flowmusic-session"  # Legacy default; overridden by --profile
 MVP = ROOT / "data" / "mvp"
 LEDGER = MVP / "ledger"
 OUTPUT = MVP / "output"
 EVENTS = MVP / "events.jsonl"
 VALID_ID = re.compile(r"^[a-zA-Z0-9._-]{3,80}$")
+
+# A script launched as scripts/mvp_probe.py needs the repository on sys.path.
+sys.path.insert(0, str(ROOT))
+from app import profiles
 
 
 def timestamp() -> str:
@@ -46,6 +50,7 @@ def atomic_json(path: Path, payload: dict) -> None:
 def event(name: str, **fields: object) -> None:
     """Allow-list prevents accidentally logging credentials, lyrics or URLs."""
     accepted = {"request_id", "model", "status", "elapsed_ms", "variant_count",
+                "profile",
                 "artifact_count", "error_class", "phase"}
     safe = {"ts": timestamp(), "event": name}
     safe.update({key: value for key, value in fields.items() if key in accepted and value is not None})
@@ -84,6 +89,8 @@ def check_pin() -> None:
 
 
 def secure_session_dir() -> None:
+    if SESSION.is_symlink():
+        raise RuntimeError("OAuth session directory must not be a symlink")
     SESSION.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         who = subprocess.run(["whoami"], capture_output=True, text=True, check=True, timeout=15)
@@ -145,15 +152,17 @@ def json_command(kind: str):
         raise RuntimeError(f"Unexpected {kind} JSON response") from exc
 
 
-def account() -> None:
+def account(profile: str) -> None:
     session_exists()
     model_list = json_command("models")
     credits = json_command("credits")
     public_names = [v.get("public_name", "") for v in model_list if isinstance(v, dict)] if isinstance(model_list, list) else []
     remaining = credits.get("credits_remaining", "indisponível") if isinstance(credits, dict) else "indisponível"
     print("Modelos:", ", ".join(public_names) if public_names else "(verificar resposta upstream)")
+    if type(remaining) is int and remaining >= 0:
+        profiles.save_snapshot(profile, remaining)
     print("Créditos disponíveis:", remaining)
-    event("account.readonly", status="ok", phase="account")
+    event("account.readonly", status="ok", phase="account", profile=profile)
 
 
 def output_metadata(data: dict, folder: Path) -> list[dict]:
@@ -192,7 +201,7 @@ def generate(args: argparse.Namespace) -> None:
     lock = MVP / "generation.lock"
     if ledger.exists() or lock.exists():
         raise RuntimeError("Existing request_id or unresolved generation lock: reconcile library manually")
-    record = {"request_id": args.request_id, "state": "submitting",
+    record = {"request_id": args.request_id, "profile": args.profile, "state": "submitting",
               "started_at": timestamp(), "model_requested": args.model, "artifacts": []}
     # Create exclusive lock and ledger before any remote side effect.
     with lock.open("x", encoding="utf-8") as stream:
@@ -203,7 +212,7 @@ def generate(args: argparse.Namespace) -> None:
         json.dump(record, stream)
         stream.flush()
         os.fsync(stream.fileno())
-    event("generation.submitting", request_id=args.request_id, model=args.model, status="submitting")
+    event("generation.submitting", request_id=args.request_id, model=args.model, profile=args.profile, status="submitting")
     output.mkdir(parents=True, exist_ok=True)
     node = shutil.which("node")
     argv = [node, str(ENTRY), "gen", args.prompt, "--model", args.model,
@@ -222,7 +231,7 @@ def generate(args: argparse.Namespace) -> None:
         record.update(state="completed", finished_at=timestamp(), artifacts=artifacts)
         atomic_json(ledger, record)
         elapsed = round((time.monotonic() - begin) * 1000)
-        event("generation.completed", request_id=args.request_id, model=args.model,
+        event("generation.completed", request_id=args.request_id, model=args.model, profile=args.profile,
               status="completed", elapsed_ms=elapsed, variant_count=len(artifacts),
               artifact_count=len(artifacts))
         lock.unlink(missing_ok=True)
@@ -232,7 +241,7 @@ def generate(args: argparse.Namespace) -> None:
         record.update(state="needs_review", finished_at=timestamp(),
                       error_class=type(exc).__name__)
         atomic_json(ledger, record)
-        event("generation.needs_review", request_id=args.request_id, model=args.model,
+        event("generation.needs_review", request_id=args.request_id, model=args.model, profile=args.profile,
               status="needs_review", error_class=type(exc).__name__)
         # Keep lock: do not start a second live attempt until human reconciliation.
         raise RuntimeError("Resultado remoto incerto. Verifique biblioteca do Flow Music; NÃO reenvie.") from None
@@ -240,7 +249,8 @@ def generate(args: argparse.Namespace) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["check", "login", "account", "generate"], default="check")
+    parser.add_argument("--mode", choices=["check", "accounts", "login", "account", "generate"], default="check")
+    parser.add_argument("--profile", default="default", help="Local account alias; no automatic failover")
     parser.add_argument("--request-id")
     parser.add_argument("--prompt")
     parser.add_argument("--model", default="Lyria 3.5")
@@ -249,11 +259,20 @@ def main() -> int:
     parser.add_argument("--instrumental", action="store_true")
     parser.add_argument("--approve-live", action="store_true")
     args = parser.parse_args()
+    global SESSION
     try:
+        profiles.validate(args.profile)
+        SESSION = profiles.session_dir(args.profile)
         check_pin()
         if args.mode == "check":
             event("environment.check", status="ok", phase="offline")
+        elif args.mode == "accounts":
+            for row in profiles.list_profiles():
+                balance = row["credits_remaining"] if row["credits_remaining"] is not None else "n/d"
+                print(f'{row["profile"]}: sessao={row["session_present"]} creditos={balance} ultima_consulta={row["checked_at"]}')
         elif args.mode == "login":
+            if (MVP / "generation.lock").exists():
+                raise RuntimeError("A music generation is active or unresolved; do not alter sessions")
             secure_session_dir()
             print("Login interativo, URL de autenticação é privada. Não copie para logs.")
             result = command([shutil.which("node"), str(ENTRY), "login"], timeout=600, interactive=True)
@@ -261,10 +280,12 @@ def main() -> int:
                 raise RuntimeError("Interactive login failed")
             secure_session_dir()
             session_exists()
-            event("login.completed", status="ok", phase="login")
+            event("login.completed", status="ok", phase="login", profile=args.profile)
         elif args.mode == "account":
+            if (MVP / "generation.lock").exists():
+                raise RuntimeError("A music generation is active or unresolved; wait before refreshing the session")
             secure_session_dir()
-            account()
+            account(args.profile)
         else:
             if not (60 <= args.seconds <= 600):
                 raise RuntimeError("Length outside MVP safety range")

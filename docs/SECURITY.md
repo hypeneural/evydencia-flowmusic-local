@@ -22,3 +22,9 @@ Flow Music consumer subscription does not provide an officially documented unlim
 
 ## Real API queue boundaries
 SQLite stores prompts locally and requires suitable directory NTFS permissions. The worker has one active submission, does not log raw provider stdout/stderr and verifies local output hashes before completion. Remote job IDs are not yet persisted, so ambiguous crashes still require review in the Flow Music library. Do not expose the HTTP API on LAN.
+
+
+## Múltiplos perfis
+Cada conta usa sua própria sessão OAuth em `FLOWMUSIC_HOME`, reduzindo conflitos de renovação de token entre contas. Inventário de créditos contém apenas alias/valor/data e pode estar desatualizado; nunca implica acesso válido.
+
+Não realizar consultas de saldo durante uma geração ativa; scripts bloqueiam login/consulta se `generation.lock` existir. Um erro remoto incerto bloqueia a fila; nunca alternar automaticamente de perfil. Proteja também `data/flowmusic-profiles/`, `data/account-snapshots/` e o banco SQLite com ACLs NTFS em Windows compartilhado.

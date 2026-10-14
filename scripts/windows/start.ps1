@@ -4,7 +4,7 @@ Set-Location (Resolve-Path (Join-Path $PSScriptRoot '../..'))
 if (!(Test-Path .venv/Scripts/python.exe)) { throw 'Execute install.ps1 antes.' }
 if ($EnableLive) {
   if (!(Test-Path vendor/flowmusic-cli/bin/flowmusic.mjs)) { throw 'CLI upstream nao instalado.' }
-  if (!(Test-Path data/flowmusic-session/session.json)) { throw 'Sessao nao encontrada. Execute mvp.ps1 -Mode login.' }
+  Write-Host 'Perfis de conta sao selecionados por pedido; cada perfil precisa de sua propria sessao.'
   $env:FLOWMUSIC_PROVIDER = 'cli'
   $env:FLOWMUSIC_ALLOW_LIVE = 'true'
   Write-Warning 'FILA REAL ATIVA: somente jobs com approve_live=true podem consumir creditos.'

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from app import main as api
+from app import profiles
 
 PROBE = api.ROOT / "scripts" / "mvp_probe.py"
 STOP = threading.Event()
@@ -79,6 +80,10 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
         raise api.HTTPException(422, "request_id is incompatible with pinned MVP probe")
     if req.lyrics:
         raise api.HTTPException(422, "Live custom lyrics require a reviewed adapter; not silently ignored")
+    try:
+        profile = profiles.validate(req.account_profile)
+    except ValueError:
+        raise api.HTTPException(422, "Invalid local account profile") from None
     job_id = str(uuid4())
     with api.db() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -87,6 +92,9 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
             if row["hash"] != digest:
                 raise api.HTTPException(409, "request_id already used")
             return api.result(row)
+        # An existing request must remain replayable even if a session was removed.
+        if not profiles.is_authenticated(profile):
+            raise api.HTTPException(409, "Selected account has no local session; log in manually first")
         pending = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE run_mode='cli' AND state IN ('queued','submitting','generating')"
         ).fetchone()[0]
@@ -139,11 +147,13 @@ def finish(job_id: str, state: str, artifacts: list[dict] | None = None) -> None
         event(conn, job_id, "job.completed" if state == "completed" else "job.needs_review", state)
 
 
-def verified_artifacts(request_id: str) -> list[dict]:
+def verified_artifacts(request_id: str, expected_profile: str | None = None) -> list[dict]:
     ledger_file = api.DATA / "mvp" / "ledger" / (request_id + ".json")
     ledger = json.loads(ledger_file.read_text(encoding="utf-8"))
     if ledger.get("state") != "completed" or ledger.get("request_id") != request_id:
         raise ValueError("MVP ledger is not completed for this request")
+    if expected_profile is not None and ledger.get("profile") != expected_profile:
+        raise ValueError("MVP ledger account profile differs from the approved job")
     output = (api.DATA / "mvp" / "output" / request_id).resolve()
     artifacts = ledger.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
@@ -171,7 +181,7 @@ def execute(record: dict, *, runner=None) -> None:
     request_id = record["request_id"]
     command = [
         sys.executable, str(PROBE), "--mode", "generate",
-        "--request-id", request_id, "--prompt", req["prompt"],
+        "--request-id", request_id, "--profile", req.get("account_profile", "default"), "--prompt", req["prompt"],
         "--model", req.get("model", "Lyria 3.5"),
         "--seconds", str(req.get("duration_seconds", 120)),
         "--format", req.get("output_format", "wav"), "--approve-live",
@@ -180,11 +190,12 @@ def execute(record: dict, *, runner=None) -> None:
         command.append("--instrumental")
     process = runner if runner is not None else subprocess.run
     try:
+        profiles.invalidate_snapshot(req.get("account_profile", "default"))
         done = process(command, cwd=str(api.ROOT), capture_output=True,
                        text=True, timeout=1320, check=False)
         if done.returncode != 0:
             raise RuntimeError("MVP probe did not complete")
-        artifacts = verified_artifacts(request_id)
+        artifacts = verified_artifacts(request_id, req.get("account_profile", "default"))
     except Exception:
         # Any failure (including timeout) could follow remote acceptance.
         finish(record["id"], "needs_review")
@@ -258,7 +269,7 @@ def reconcile(job_id: str, resolution: str) -> dict:
     artifacts = None
     if resolution == "completed":
         try:
-            artifacts = verified_artifacts(row["request_id"])
+            artifacts = verified_artifacts(row["request_id"], json.loads(row["payload"]).get("account_profile", "default"))
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             raise api.HTTPException(409, "Completed MVP ledger and matching audio required") from None
     with api.db() as conn:

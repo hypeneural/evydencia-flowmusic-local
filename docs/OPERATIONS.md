@@ -27,3 +27,7 @@ Run `agent.cmd` on Windows (Python compile+pytest and pinned upstream npm test).
 
 ## FIFO real local
 `start.ps1 -EnableLive` activates a single background worker. Each POST requires `approve_live=true` in its payload, and the request is persisted before any provider attempt. One process at a time; unknown results enter `needs_review` and stop the queue. See `docs/API_QUEUE.md` for endpoints, manual reconciliation and first live job.
+
+
+## Inventário de contas
+`GET /v1/music/accounts` devolve saldos cacheados sem realizar consultas externas. Cada pedido live fixa `account_profile` em `payload` do SQLite. Os snapshots por alias são persistidos separadamente em `data/account-snapshots/` e invalidados no início de uma tentativa do perfil. Veja `docs/ACCOUNTS.md`.

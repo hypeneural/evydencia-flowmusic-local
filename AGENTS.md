@@ -1,26 +1,19 @@
-# Evydencia FlowMusic Local — Gemini 3.8 Flash | AI-FIRST MVP
-Goal: deliver **one real, observable Windows experiment at a time** with minimal edits. Independent repo: never modify CRM / Workflow.
+# Evydencia FlowMusic Local — AI-first / Gemini 3.8 Flash
 
-## Decision loop
-1. Read this file; use ONE relevant skill from `.agents/skills/`, then only affected code.
-2. Hypothesis -> one focused check / one explicitly approved live request -> redacted ledger/event evidence -> next action.
-3. Do not run the full suite after every change; use targeted tests and Windows smoke before PR merge.
+Objetivo: desenvolver somente este serviço Windows com logs de execução e poucas verificações por alteração. Não alterar CRM/Workflow.
 
-## Core controls
-- API default = mock. Live requires `start.ps1 -EnableLive` **and** `approve_live=true` on each job.
-- One CLI process / one active generation; SQLite queue FIFO; max 25 pending.
-- A failed/uncertain provider submission -> `needs_review`, queue **stops**. Never auto-retry or reuse a prior request ID; manually reconcile based on provider library.
-- Do not print/store account tokens, cookies, OAuth URLs, raw provider responses or customer media in Git or external logs.
-- No bypass of CAPTCHA, 403/429, platform quotas, or access limits. Terms must permit selected automation; otherwise stop.
-- Scripts are Windows-local. No Docker/Redis/Celery/multi-account unless strong evidence justifies it.
-- Never merge PR automatically or touch main.
+## Fluxo
+1. Escolher UMA skill em .agents/skills e ler só os arquivos relevantes.
+2. Um problema -> hipótese -> diagnóstico Windows dirigido -> menor correção -> evidência.
+3. Sem GitHub Actions ou bateria extensa de testes simulados por padrão. Preservar as duas gerações reais anteriores: natal-mvp-001 e natal-api-002.
 
-## Where to work
-- `app/main.py`: FastAPI contracts and original mock service.
-- `app/queue.py`: durable claim + single worker + events and reconciliation.
-- `scripts/mvp_probe.py`: already-real one-shot generator; don't reimplement or refactor without proven need.
-- `docs/API_QUEUE.md`: API and queue contract.
-- `tests/test_queue.py`: fake provider/SQLite queue unit checks, no Google calls.
-- `.agents/skills/flowmusic-mvp/`: one-shot probe; `.agents/skills/flowmusic-local/`: API/queue repair.
+## Invariantes
+- FastAPI 127.0.0.1, FIFO SQLite, request_id UNIQUE, um envio ativo.
+- Live somente com start.ps1 -EnableLive e approve_live=true por job.
+- Contas: FLOWMUSIC_HOME isolado, account_profile por pedido e ledger, snapshots de créditos ordenados e com indicação de validade.
+- Não alternar contas automaticamente para contornar limitações; erros ambíguos = needs_review e fila parada, sem novo POST.
+- Nunca versionar/mostrar tokens, sessões, callbacks OAuth, prompts privados ou áudio de clientes.
+- Não executar geração remota sem autorização explícita; cumprir os termos aplicáveis.
+- Não alterar main nem fazer merge automático.
 
-Report concise: SHA, actual command, state, event evidence, next action. Distinguish simulated CI and authenticated Windows proof.
+Arquivos: app/main.py (HTTP), app/queue.py (SQLite/FIFO), app/profiles.py (contas/saldos), scripts/mvp_probe.py (motor), docs/ACCOUNTS.md e docs/API_QUEUE.md (operação).

@@ -53,6 +53,7 @@ class MusicRequest(BaseModel):
     duration_seconds: int = Field(default=120, ge=60, le=600)
     output_format: str = Field(default="wav", pattern=r"^(wav|m4a|mp3)$")
     approve_live: bool = False
+    account_profile: str = Field(default="default", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
 
 @contextmanager
 def db():
@@ -105,7 +106,7 @@ async def life(_app: FastAPI):
     finally:
         queue.stop()
 
-app = FastAPI(title="Evydencia FlowMusic Local", version="0.2.0", lifespan=life)
+app = FastAPI(title="Evydencia FlowMusic Local", version="0.2.1", lifespan=life)
 
 def auth(x_local_token: str | None = Header(default=None)) -> None:
     try:
@@ -116,8 +117,10 @@ def auth(x_local_token: str | None = Header(default=None)) -> None:
         raise HTTPException(401, "Local token required")
 
 def result(row: sqlite3.Row) -> dict:
+    payload = json.loads(row["payload"]) if row["payload"] else {}
     return {
         "job_id": row["id"],
+        "account_profile": payload.get("account_profile", "default"),
         "request_id": row["request_id"],
         "status": row["state"],
         "result": json.loads(row["result"]) if row["result"] else None,
@@ -212,6 +215,15 @@ def list_jobs(limit: int = 30):
             "SELECT * FROM jobs ORDER BY created_at DESC,rowid DESC LIMIT ?", (limit,)
         ).fetchall()
     return {"jobs": [result(row) for row in rows]}
+
+@app.get("/v1/music/accounts", dependencies=[Depends(auth)])
+def accounts_inventory():
+    """Cached read-only inventory: sorted by snapshot, NEVER used to route jobs."""
+    from app import profiles
+    return {"profiles": profiles.list_profiles(),
+            "selection": "manual_only", "automatic_failover": False,
+            "note": "Credit balances are cached observations, not live guarantees"}
+
 
 @app.get("/v1/music/queue", dependencies=[Depends(auth)])
 def queue_status():
