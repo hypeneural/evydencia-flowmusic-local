@@ -33,7 +33,7 @@ flowchart TD
 - On bootstrap: `submitting`, `generating`, `downloading`, `validating` -> `needs_review`; NEVER replay an ambiguous remote POST.
 - A concurrent caller might observe `queued` while a mock file is being written. Treat this as an intermediate state.
 
-## Upstream boundary: NOT integrated
+## Upstream boundary: HTTP API NOT integrated; one-shot supervised MVP CLI is available
 ```mermaid
 flowchart LR
   Python["FastAPI mock service"] -. "future audited adapter" .-> CLI["flowmusic-cli (pinned, vendor ignored)"]
@@ -44,6 +44,25 @@ flowchart LR
   SSE --> Download["src/commands/context.mjs download"]
 ```
 Current `app/main.py` imports **no** Node module, Playwright, Chrome or Google SDK and issues no remote generation request. The installer only fetches upstream for inspection/tests.
+
+### Real MVP one-shot graph (separate process)
+
+```mermaid
+flowchart LR
+  Operator["Operator Windows"] --> PS["scripts/windows/mvp.ps1"]
+  PS --> PY["scripts/mvp_probe.py"]
+  PY --> Pinned["Verify pinned upstream SHA"]
+  PY --> AuthDir["Secure isolated OAuth session"]
+  PY --> Ledger["Exclusive request_id ledger + generation lock"]
+  Ledger --> Patch["Disable unsafe POST retries in local vendor checkout"]
+  Patch --> CLI["Pinned CLI: gen, model and audio"]
+  CLI --> JSON["Parse result without logging credentials"]
+  JSON --> Artifact["Verify path + SHA256"]
+  Artifact --> Event["data/mvp/events.jsonl"]
+  JSON --> Unknown["On ambiguous failure: needs_review, lock remains"]
+```
+
+This graph is code structure, not observed authenticated execution. A successful CLI response alone does not prove platform compliance or professional audio quality. See `docs/MVP_RUNBOOK.md`.
 
 ## Change impact map
 | Change | Inspect | Test |

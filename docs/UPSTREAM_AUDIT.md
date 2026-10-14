@@ -3,7 +3,7 @@
 ## Target source
 - Primary: [deluxebear/flowmusic-cli](https://github.com/deluxebear/flowmusic-cli), pinned to `08491dc3319ae9f530c5c05c431196bbbbb10607` by `scripts/windows/install.ps1` (MIT code).
 - Other audited candidates: [south1907/flowmusic-toolkit](https://github.com/south1907/flowmusic-toolkit) (FastAPI/Chrome extension, previous CI Makefile path issue); [genz27/FlowMusic2API](https://github.com/genz27/FlowMusic2API) (Go, unnecessary multi-account scope).
-- The local app does not import or invoke upstream yet. Node.js tests confirm behavior of mocks/helpers, not live authentication or music generation.
+- The FastAPI app does not invoke upstream. An independent `scripts/mvp_probe.py` Windows operator tool may run the pinned upstream for one explicit real MVP. Node.js unit tests and our Python CI do not prove the live request works.
 
 ## Verified source paths and risks
 | Upstream path | Logic inspected | Remaining risk |
@@ -24,9 +24,9 @@
 - Uvicorn has worker multiprocess support; current service must use `--workers 1` until a durable worker model is implemented: https://www.uvicorn.org/deployment/
 - Antigravity defaults to `.agents/skills/`; legacy workflows stop October 19, 2026: https://www.antigravity.google/docs/migration/workflows-to-skills/
 
-## Validation levels
+## Single-attempt MVP hardening\nThe manual script checks the pinned commit before calls, restricts the isolated local session directory, patches **only the two known unsafe POST retry expressions** inside gitignored vendor source, persists an exclusive request ID and single-flight lock before any generation, and writes allow-listed JSONL events without prompt or tokens. A remote rejection, timeout or other ambiguous failure stops and requires manual reconciliation; it cannot be safely retried blindly. Inspect the local vendor diff if upstream changes.\n\n## Validation levels
 1. Static source / GitHub Actions: upstream unit checks and pinned source.
 2. Windows `agent.cmd`: mock FastAPI + upstream test suite, no credits.
 3. Manually supervised read-only account/model/credits diagnostic (only after terms review).
-4. Explicitly approved single generation and real WAV quality validation (not done).
+4. Operator-approved one-shot generation using `scripts/windows/mvp.ps1 -Mode generate -ApproveLive`, output inspection and review of local ledger (not executed by this audit).
 No claim beyond level 2 is justified today.
