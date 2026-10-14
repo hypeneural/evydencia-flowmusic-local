@@ -152,7 +152,8 @@ def verified_artifacts(request_id: str, expected_profile: str | None = None) -> 
     ledger = json.loads(ledger_file.read_text(encoding="utf-8"))
     if ledger.get("state") != "completed" or ledger.get("request_id") != request_id:
         raise ValueError("MVP ledger is not completed for this request")
-    if expected_profile is not None and ledger.get("profile") != expected_profile:
+    # Ledgers generated before multi-profile support belong to the original default account.
+    if expected_profile is not None and ledger.get("profile", "default") != expected_profile:
         raise ValueError("MVP ledger account profile differs from the approved job")
     output = (api.DATA / "mvp" / "output" / request_id).resolve()
     artifacts = ledger.get("artifacts")
