@@ -27,3 +27,23 @@ Na primeira inicialização da API com a atualização, `queue.migrate()` cria u
 O valor/hora de saldo continua armazenado em snapshot JSON local: **não há duas fontes concorrentes do mesmo saldo no banco**. Após uma tentativa de geração, o saldo anterior é preservado apenas para histórico, marcado como `stale`; é preciso consultar novamente para obter saldo recente. Nunca usar saldo cacheado para automação de alternância.
 
 O probe elimina `FLOWMUSIC_TOKEN` e `FLOWMUSIC_BASE` herdados do Windows antes de iniciar o CLI, porque o upstream os aceita como substituições de token e servidor. Assim o login/consulta da conta segue somente o `FLOWMUSIC_HOME` selecionado.
+
+## Painel visual
+A tela de inventário agora está em **http://127.0.0.1:8765/painel-contas**.
+`GET /v1/music/accounts` (protegido por `X-Local-Token`) retorna o e-mail
+derivado dos metadados da sessão, status de expiração local, último saldo e
+`checked_at`. A página não tem dependências adicionais: HTML, CSS e JavaScript
+servidos pelo FastAPI.
+
+**Importante:** presença de `session.json` não prova uma sessão Google online.
+`access_valid_locally` significa apenas que a expiração registrada ainda
+não passou. `access_expired_refreshable` significa token expirado com refresh
+token presente (renovação ainda não testada). `recent_account_check`
+indica consulta de saldo recente registrada; não garante saldo atual após
+outra janela usar a conta.
+
+Para verificar uma conta junto ao provedor, execute voluntariamente
+`mvp.ps1 -Mode account -Profile <alias>`, depois clique "Atualizar painel".
+Isso NÃO produz música, mas pode renovar a sessão no disco. Não rode enquanto
+há geração ativa; não execute automaticamente em intervalos. Veja
+[ACCOUNTS_DASHBOARD.md](ACCOUNTS_DASHBOARD.md).

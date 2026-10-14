@@ -19,3 +19,12 @@ Objetivo: desenvolver somente este serviço Windows com logs de execução e pou
 Arquivos: app/main.py (HTTP), app/queue.py (SQLite/FIFO), app/profiles.py (contas/saldos), scripts/mvp_probe.py (motor), docs/ACCOUNTS.md e docs/API_QUEUE.md (operação).
 ## Pré-login studio02 e migração
 Antes de pedir novo login: rodar `scripts/preflight_accounts.py` localmente (sem rede), conferir `generation.lock`, jobs `submitting/needs_review/queued` e executar somente o diagnóstico necessário. O primeiro startup migra SQLite com backup em `data/backups/`; nunca apagar banco, tokens ou WAVs antigos. `start.ps1 -EnableLive` nunca retoma pendentes sem `-ResumePending`. Não gastar créditos para testar a nova estrutura de perfis.
+
+## Painel de contas
+Para UI, ler apenas `app/static/accounts.html`, `app/static/accounts.css`,
+`app/static/accounts.js`, `app/profiles.py`, `app/main.py` e
+`docs/ACCOUNTS_DASHBOARD.md`. O HTML não pode conter tokens ou e-mails
+pré-renderizados. API exige header `X-Local-Token`; manter token só na
+memória do navegador. Status da sessão é LOCAL, nunca afirmar login online sem
+consulta upstream autorizada. Um teste real de saldo sob demanda basta para
+validar a interface; não gastar créditos de geração nesta mudança.

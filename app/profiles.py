@@ -36,6 +36,52 @@ def is_authenticated(name: str) -> bool:
     token_file = folder / "session.json"
     return folder.is_dir() and not folder.is_symlink() and token_file.is_file() and not token_file.is_symlink()
 
+def session_public_metadata(name: str) -> dict:
+    """Inspect only non-secret fields of a locally saved CLI session.
+
+    A file on disk does NOT prove online authentication. Never return tokens
+    or raw session JSON. No remote call or token refresh happens here.
+    """
+    folder = session_dir(name)
+    session = folder / "session.json"
+    empty = {"email": None, "session_status": "not_connected",
+             "access_expires_at": None, "refresh_available": False}
+    if (not folder.is_dir() or folder.is_symlink() or
+            not session.is_file() or session.is_symlink()):
+        return empty
+    try:
+        if session.stat().st_size > 256 * 1024:
+            raise ValueError("Session metadata too large")
+        record = json.loads(session.read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            raise ValueError("Invalid session format")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {**empty, "session_status": "invalid_file"}
+    email = record.get("email")
+    if not isinstance(email, str) or len(email) > 254 or "@" not in email:
+        email = None
+    expires = record.get("expires_at")
+    if not isinstance(expires, (int, float)) or isinstance(expires, bool):
+        expires = None
+    has_refresh = isinstance(record.get("refresh_token"), str) and bool(record["refresh_token"])
+    if expires is None:
+        status = "metadata_incomplete"
+    elif expires > datetime.now(timezone.utc).timestamp() + 30:
+        status = "access_valid_locally"
+    elif has_refresh:
+        status = "access_expired_refreshable"
+    else:
+        status = "access_expired"
+    return {
+        "email": email, "session_status": status,
+        "access_expires_at": (
+            datetime.fromtimestamp(expires, timezone.utc).isoformat(timespec="seconds")
+            if expires is not None and 0 < expires < 4102444800 else None
+        ),
+        "refresh_available": has_refresh,
+    }
+
+
 def credit_snapshot(name: str) -> dict:
     validate(name)
     target = SNAPSHOTS / (name + ".json")
@@ -96,9 +142,15 @@ def list_profiles() -> list[dict]:
     data = []
     for name in names:
         balance = credit_snapshot(name)
+        metadata = session_public_metadata(name)
         data.append({"profile": name, "session_present": is_authenticated(name),
+                     **metadata,
                      "credits_remaining": balance["credits_remaining"],
-                     "checked_at": balance["checked_at"], "stale": balance["stale"]})
+                     "checked_at": balance["checked_at"], "stale": balance["stale"],
+                     "recent_account_check": (
+                         metadata["session_status"] not in {"not_connected", "invalid_file"}
+                         and balance["credits_remaining"] is not None and not balance["stale"]
+                     )})
     # Inventory only: ranking by cached credits never selects an account for execution.
     return sorted(data, key=lambda r: (r["stale"], r["credits_remaining"] is None,
                                       -(r["credits_remaining"] or 0), r["profile"]))

@@ -281,7 +281,18 @@ def main() -> int:
                 raise RuntimeError("A music generation is active or unresolved; do not alter sessions")
             secure_session_dir()
             print("Login interativo, URL de autenticação é privada. Não copie para logs.")
-            result = command([shutil.which("node"), str(ENTRY), "login"], timeout=1200, interactive=True)
+            # The upstream login CLI has a 240s default on clean checkouts.
+            # Invoke the exported login with 900s explicitly instead of editing
+            # ignored vendor/auth.mjs, which install.ps1 replaces on checkout.
+            login_code = (
+                "import { loginWithBrowser } from "
+                "'./vendor/flowmusic-cli/src/lib/auth.mjs'; "
+                "await loginWithBrowser({ timeoutS: 900 });"
+            )
+            result = command(
+                [shutil.which("node"), "--input-type=module", "--eval", login_code],
+                timeout=1200, interactive=True,
+            )
             if result.returncode:
                 raise RuntimeError("Interactive login failed")
             secure_session_dir()

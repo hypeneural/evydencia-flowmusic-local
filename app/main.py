@@ -10,11 +10,14 @@ import threading
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
+STATIC = ROOT / "app" / "static"
 DATA = ROOT / "data"
 DB = DATA / "jobs.db"
 TOKEN = DATA / "local-token.txt"
@@ -106,7 +109,29 @@ async def life(_app: FastAPI):
     finally:
         queue.stop()
 
-app = FastAPI(title="Evydencia FlowMusic Local", version="0.2.1", lifespan=life)
+app = FastAPI(title="Evydencia FlowMusic Local", version="0.2.2", lifespan=life)
+app.mount("/assets", StaticFiles(directory=str(STATIC)), name="assets")
+
+
+@app.get("/painel-contas", response_class=HTMLResponse, include_in_schema=False)
+def accounts_dashboard():
+    """Public static shell only; the browser must authenticate for account data."""
+    return HTMLResponse(
+        content=(STATIC / "accounts.html").read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Content-Security-Policy": (
+                "default-src 'none'; style-src 'self'; script-src 'self'; "
+                "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+                "form-action 'none'"
+            ),
+        },
+    )
+
 
 def auth(x_local_token: str | None = Header(default=None)) -> None:
     try:
@@ -217,8 +242,10 @@ def list_jobs(limit: int = 30):
     return {"jobs": [result(row) for row in rows]}
 
 @app.get("/v1/music/accounts", dependencies=[Depends(auth)])
-def accounts_inventory():
-    """Cached read-only inventory: sorted by snapshot, NEVER used to route jobs."""
+def accounts_inventory(response: Response):
+    """Only public session metadata, last-known credits and alias; never tokens."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     from app import profiles
     return {"profiles": profiles.list_profiles(),
             "selection": "manual_only", "automatic_failover": False,
