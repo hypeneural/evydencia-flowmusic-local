@@ -1,10 +1,28 @@
 import os,sqlite3,json,uuid,hashlib,secrets,subprocess,threading
 from pathlib import Path
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from fastapi import FastAPI,Header,HTTPException,Depends
 from pydantic import BaseModel,Field
-ROOT=Path(__file__).resolve().parents[1];DATA=ROOT/"data"; DB=DATA/"jobs.db";TOKEN=DATA/"local-token.txt"
-MUTEX=threading.Lock();PROVIDER=os.getenv("FLOWMUSIC_PROVIDER","mock")
+ROOT=Path(__file__).resolve().parents[1]
+DATA=Path(os.getenv("FLOWMUSIC_DATA_DIR", str(ROOT/"data")))
+DB=DATA/"jobs.db"
+TOKEN=DATA/"local-token.txt"
+MUTEX=threading.Lock()
+def get_provider() -> str:
+    return os.getenv("FLOWMUSIC_PROVIDER", "mock")
+def secure_token_file(path: Path) -> None:
+    if os.name == "nt":
+        user = os.getenv("USERNAME")
+        if user:
+            try:
+                subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"], capture_output=True, check=False)
+            except Exception:
+                pass
+    else:
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
 class MusicRequest(BaseModel):
  request_id:str=Field(min_length=3,max_length=120,pattern=r"^[a-zA-Z0-9._:-]+$")
  prompt:str=Field(min_length=3,max_length=4000)
@@ -14,18 +32,26 @@ class MusicRequest(BaseModel):
  instrumental:bool=False
  duration_seconds:int=Field(default=120,ge=60,le=600)
  output_format:str=Field(default="wav",pattern="^(wav|m4a|mp3)$")
+@contextmanager
 def db():
- c=sqlite3.connect(DB,timeout=15);c.row_factory=sqlite3.Row;c.execute("PRAGMA journal_mode=WAL");return c
+ c=sqlite3.connect(DB,timeout=15)
+ c.row_factory=sqlite3.Row
+ c.execute("PRAGMA journal_mode=WAL")
+ try:
+  with c:
+   yield c
+ finally:
+  c.close()
 def bootstrap():
  DATA.mkdir(parents=True,exist_ok=True);(DATA/"output").mkdir(exist_ok=True)
  if not TOKEN.exists():
   try:
    with TOKEN.open("x",encoding="utf-8") as f:f.write(secrets.token_urlsafe(48))
+   secure_token_file(TOKEN)
   except FileExistsError:pass
  with db() as c:
   c.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,request_id TEXT UNIQUE,hash TEXT,payload TEXT,state TEXT,result TEXT,error TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
   c.execute("UPDATE jobs SET state='needs_review',error='interrupted; remote acceptance unknown' WHERE state IN ('submitting','generating','downloading')")
-  c.commit()
 @asynccontextmanager
 async def life(app):
  bootstrap();yield
@@ -37,7 +63,7 @@ def result(r):
 @app.get("/health")
 def health():return {"ok":True}
 @app.get("/v1/music/status",dependencies=[Depends(auth)])
-def status():return {"provider":PROVIDER,"live_enabled":False,"note":"Live generation disabled until manual Windows and terms validation"}
+def status():return {"provider":get_provider(),"live_enabled":False,"note":"Live generation disabled until manual Windows and terms validation"}
 @app.post("/v1/music/jobs",status_code=202,dependencies=[Depends(auth)])
 def create(req:MusicRequest):
  payload=json.dumps(req.model_dump(),ensure_ascii=False,sort_keys=True);digest=hashlib.sha256(payload.encode()).hexdigest()
@@ -50,7 +76,7 @@ def create(req:MusicRequest):
    uid=str(uuid.uuid4())
    c.execute("INSERT INTO jobs(id,request_id,hash,payload,state) VALUES(?,?,?,?,?)",(uid,req.request_id,digest,payload,"queued"))
    c.commit()
- if PROVIDER=="mock":
+ if get_provider()=="mock":
   artifact=DATA/"output"/(uid+".json");artifact.write_text(json.dumps({"mock":True,"prompt":req.prompt},ensure_ascii=False),encoding="utf-8")
   value={"mock":True,"artifacts":[{"path":str(artifact),"sha256":hashlib.sha256(artifact.read_bytes()).hexdigest()}]}
   with db() as c:c.execute("UPDATE jobs SET state='completed',result=? WHERE id=?",(json.dumps(value),uid));c.commit()
