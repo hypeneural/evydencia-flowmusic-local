@@ -1,4 +1,4 @@
-# Operations — local mock service
+# Operations — default mock, optional real queue
 
 ## Contract
 Host `127.0.0.1:8765`; header `X-Local-Token` from gitignored `data/local-token.txt`.
@@ -24,3 +24,6 @@ Host `127.0.0.1:8765`; header `X-Local-Token` from gitignored `data/local-token.
 
 ## Test
 Run `agent.cmd` on Windows (Python compile+pytest and pinned upstream npm test). No Google credits are spent.
+
+## FIFO real local
+`start.ps1 -EnableLive` activates a single background worker. Each POST requires `approve_live=true` in its payload, and the request is persisted before any provider attempt. One process at a time; unknown results enter `needs_review` and stop the queue. See `docs/API_QUEUE.md` for endpoints, manual reconciliation and first live job.

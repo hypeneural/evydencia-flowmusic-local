@@ -30,3 +30,6 @@
 3. Manually supervised read-only account/model/credits diagnostic (only after terms review).
 4. Operator-approved one-shot generation using `scripts/windows/mvp.ps1 -Mode generate -ApproveLive`, output inspection and review of local ledger (not executed by this audit).
 No claim beyond level 2 is justified today.
+
+## Evidence 2026-10-14
+The operator reported a successful one-shot Lyria 3.5 WAV (28.7 seconds, 23,418,850 bytes, reported credit delta 5). This proves a manual probe at that point, not yet a second authenticated run through the newly added HTTP FIFO queue. The queue uses synthetic offline CI checks only until deliberately exercised on Windows.

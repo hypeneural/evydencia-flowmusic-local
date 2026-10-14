@@ -53,3 +53,6 @@ Retornar apenas: ID, saldo consultado (se disponível), status, tempo, quantidad
 - Não acionar lotes com vários `--jobs`, proxies, rotação de contas ou browser oculto.
 - Não anexar logs completos da autenticação à conversa.
 - Não ativar chamada real automaticamente ao iniciar o FastAPI.
+
+## API + fila em MVP
+A validação real manual apresentada para `natal-mvp-001` confirmou WAV e débito relatado de 5 créditos. **Não reutilize esse ID**. A integração da nova fila deve ser validada com um ID novo, uma aprovação deliberada e logs do endpoint `/v1/music/jobs/{id}/events`. Ambiguidade = `needs_review`; nunca reenvie automaticamente.

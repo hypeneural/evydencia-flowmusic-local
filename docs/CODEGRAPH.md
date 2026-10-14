@@ -33,7 +33,7 @@ flowchart TD
 - On bootstrap: `submitting`, `generating`, `downloading`, `validating` -> `needs_review`; NEVER replay an ambiguous remote POST.
 - A concurrent caller might observe `queued` while a mock file is being written. Treat this as an intermediate state.
 
-## Upstream boundary: HTTP API NOT integrated; one-shot supervised MVP CLI is available
+## Upstream boundary: opt-in API queue now integrated
 ```mermaid
 flowchart LR
   Python["FastAPI mock service"] -. "future audited adapter" .-> CLI["flowmusic-cli (pinned, vendor ignored)"]
@@ -43,7 +43,7 @@ flowchart LR
   Tool --> SSE["SSE result / clips"]
   SSE --> Download["src/commands/context.mjs download"]
 ```
-Current `app/main.py` imports **no** Node module, Playwright, Chrome or Google SDK and issues no remote generation request. The installer only fetches upstream for inspection/tests.
+The API delegates explicitly approved live jobs to `app/queue.py`, which launches `scripts/mvp_probe.py` once per job. It remains mock by default. See `docs/API_QUEUE.md`.
 
 ### Real MVP one-shot graph (separate process)
 
@@ -76,3 +76,6 @@ This graph is code structure, not observed authenticated execution. A successful
 
 ## Exclusions and release gates
 This static graph is not proof of live generation, performance, safety of reverse engineered endpoints, or permission to automate a consumer subscription. Review `docs/SECURITY.md` before changing the provider gate.
+
+## Current FIFO queue (v0.2)
+POST /v1/music/jobs -> SQLite UNIQUE(request_id) -> app/queue.py create_live -> claim (BEGIN IMMEDIATE, one submitting globally) -> mvp_probe -> local ledger + artifacts -> SHA256 verification -> completed or needs_review. A needs_review job blocks the queue until manual reconciliation; no automatic resubmission. See docs/API_QUEUE.md.
