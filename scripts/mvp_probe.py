@@ -281,7 +281,7 @@ def main() -> int:
                 raise RuntimeError("A music generation is active or unresolved; do not alter sessions")
             secure_session_dir()
             print("Login interativo, URL de autenticação é privada. Não copie para logs.")
-            result = command([shutil.which("node"), str(ENTRY), "login"], timeout=600, interactive=True)
+            result = command([shutil.which("node"), str(ENTRY), "login"], timeout=1200, interactive=True)
             if result.returncode:
                 raise RuntimeError("Interactive login failed")
             secure_session_dir()
