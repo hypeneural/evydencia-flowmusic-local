@@ -5,6 +5,7 @@ Serviço independente do Python Workflow, com **validação real, execução sup
 ## Caminho curto para o Antigravity 3.8 Flash
 - Leia somente `AGENTS.md`, invoque `/flowmusic-mvp` e veja `docs/MVP_RUNBOOK.md`.
 - Uma hipótese -> uma execução -> um registro JSONL -> uma correção. Evite quatro matrizes de teste a cada alteração.
+- `agent.cmd` roda **checagem rápida, sem Google**. `agent.cmd test` executa suite Python + testes Node apenas sob demanda.
 - `/flowmusic-local` cuida da API mock quando necessário; `/flowmusic-codegraph` apenas para bugs transversais.
 
 ## Instalação
@@ -14,7 +15,7 @@ cd evydencia-flowmusic-local
 git fetch origin
 git switch --track origin/feat/windows-local-engine-foundation
 powershell -ExecutionPolicy Bypass -File scripts/windows/install.ps1
-powershell -ExecutionPolicy Bypass -File scripts/windows/mvp.ps1 -Mode check
+.\agent.cmd
 ```
 O instalador fixa `deluxebear/flowmusic-cli` (MIT) no commit `08491dc3319ae9f530c5c05c431196bbbbb10607`; `vendor/`, `data/` e sessões são ignorados pelo Git.
 
