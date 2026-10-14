@@ -54,7 +54,7 @@ Em outro terminal, sem mostrar o valor do token:
 $token = (Get-Content data/local-token.txt -Raw).Trim()
 $headers = @{ 'X-Local-Token' = $token }
 $body = @{
-  request_id = 'natal-api-002'  # NOVO ID, nunca reutilize natal-mvp-001
+  request_id = ('mvp-' + [guid]::NewGuid().ToString('N'))  # gerar novo ID
   prompt = 'Trilha instrumental de Natal com piano e sinos'
   instrumental = $true
   model = 'Lyria 3.5'
@@ -79,7 +79,7 @@ A fila limita a 25 pendentes, usa um worker sem concorrência e faz polling loca
 - O ledger originalmente não registrava `provider_job_id`/SSE incremental, então a recuperação após erro ambíguo é manual. Uma melhoria futura deve persistir esse ID antes de aguardar áudio, sem provocar novo POST.
 - FFprobe e qualidade musical ainda precisam de validação antes do Workflow consumir WAV; a fila atual revalida caminho, tamanho e SHA-256.
 - Prompts constam do SQLite local para recuperar jobs; proteger `data/` com NTFS ACL em máquinas compartilhadas.
-- O servidor FastAPI executa um worker interno no `lifespan`, mantido por um único processo Windows. Não inicie vários Uvicorn workers. <Link> não integra o Workflow automaticamente; consumo depende de comando explícito.
+- O servidor FastAPI executa um worker interno no `lifespan`, mantido por um único processo Windows. Não inicie vários Uvicorn workers. O serviço não integra o Workflow automaticamente; consumo depende de comando explícito.
 
 
 ## Perfis múltiplos e saldos — extensão da API
@@ -90,3 +90,9 @@ A fila limita a 25 pendentes, usa um worker sem concorrência e faz polling loca
 `request_id` continua global entre perfis. O mesmo ID+payload retorna o mesmo job mesmo se a sessão do perfil estiver temporariamente indisponível. Novos IDs exigem sessão existente. A seleção do perfil não muda depois da aceitação e **não existe fallback automático por falta de créditos ou falha do provedor**.
 
 O executor usa `FLOWMUSIC_HOME` individual; ver [ACCOUNTS.md](ACCOUNTS.md). Manter um worker global e não consultar saldos enquanto houver geração ativa. Os snapshots de saldo ficam em arquivos locais ignorados pelo Git, não numa nova tabela SQLite: isso evita migrar o banco já operacional.
+
+## Ativação real após reinício
+O script `start.ps1 -EnableLive` executa um preflight offline: em `needs_review`, `submitting`, arquivo de lock ou erro de integridade SQLite, recusa iniciar. Havendo tarefas live `queued`, a retomada exige revisão dos pedidos e a opção explícita `-ResumePending`. Nenhuma tarefa nova é enviada automaticamente apenas por consultar o inventário.
+
+## Cadastro de perfis em SQLite
+A migração transacional, antes de alterar o esquema, salva `jobs.db` pelo mecanismo SQLite backup em `data/backups`. Cria `account_profiles(alias, registered_at)` e `jobs.account_profile` com índice. Registros anteriores são associados a `default`, mantendo hash, ID e resultados originais. A coluna indexada é conferida contra o payload antes do envio ao provedor. Créditos permanecem em snapshots JSON locais de valor e horário para evitar fontes concorrentes.

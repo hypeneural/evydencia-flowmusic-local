@@ -32,3 +32,9 @@ Não há GitHub Actions. Testes/diagnósticos locais apenas conforme necessidade
 `127.0.0.1:8765/docs`: API protegida por header `X-Local-Token` (arquivo `data/local-token.txt`). Cada pedido real exige `approve_live=true`. Fila bloqueada em resultados remotos incertos; não repetir usando outra conta.
 
 Detalhes: [docs/API_QUEUE.md](docs/API_QUEUE.md), [docs/ACCOUNTS.md](docs/ACCOUNTS.md), [docs/SECURITY.md](docs/SECURITY.md). O uso de endpoints internos do provedor não é API oficial e depende dos termos aplicáveis.
+## Antes do segundo login — preflight offline
+```powershell
+.\.venv\Scripts\python.exe scripts/preflight_accounts.py
+.\scripts\windows\mvp.ps1 -Mode accounts
+```
+O preflight não chama o Google. O primeiro `start.ps1` após a atualização cria backup da base SQLite em `data/backups/` antes da migração da tabela de perfis. `start.ps1 -EnableLive` bloqueia pedidos já pendentes; somente após revisão use `-ResumePending`. Ver [docs/ACCOUNTS.md](docs/ACCOUNTS.md).

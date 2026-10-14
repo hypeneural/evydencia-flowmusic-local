@@ -62,6 +62,10 @@ def event(name: str, **fields: object) -> None:
 
 def command(parts: list[str], *, timeout: int = 120, interactive: bool = False):
     env = os.environ.copy()
+    # The upstream CLI accepts env access tokens and custom API endpoints.
+    # Both would silently override the selected local account/session or server.
+    env.pop("FLOWMUSIC_TOKEN", None)
+    env.pop("FLOWMUSIC_BASE", None)
     env["FLOWMUSIC_HOME"] = str(SESSION)
     kwargs = {"cwd": ROOT, "env": env, "timeout": timeout, "check": False}
     if not interactive:
@@ -212,6 +216,8 @@ def generate(args: argparse.Namespace) -> None:
         json.dump(record, stream)
         stream.flush()
         os.fsync(stream.fileno())
+    # Any future credit snapshot is stale as soon as a generation is attempted.
+    profiles.invalidate_snapshot(args.profile)
     event("generation.submitting", request_id=args.request_id, model=args.model, profile=args.profile, status="submitting")
     output.mkdir(parents=True, exist_ok=True)
     node = shutil.which("node")
@@ -269,7 +275,7 @@ def main() -> int:
         elif args.mode == "accounts":
             for row in profiles.list_profiles():
                 balance = row["credits_remaining"] if row["credits_remaining"] is not None else "n/d"
-                print(f'{row["profile"]}: sessao={row["session_present"]} creditos={balance} ultima_consulta={row["checked_at"]}')
+                print(f'{row["profile"]}: sessao={row["session_present"]} creditos={balance} ultima_consulta={row["checked_at"]} expirado={row["stale"]}')
         elif args.mode == "login":
             if (MVP / "generation.lock").exists():
                 raise RuntimeError("A music generation is active or unresolved; do not alter sessions")

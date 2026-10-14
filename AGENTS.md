@@ -17,3 +17,5 @@ Objetivo: desenvolver somente este serviço Windows com logs de execução e pou
 - Não alterar main nem fazer merge automático.
 
 Arquivos: app/main.py (HTTP), app/queue.py (SQLite/FIFO), app/profiles.py (contas/saldos), scripts/mvp_probe.py (motor), docs/ACCOUNTS.md e docs/API_QUEUE.md (operação).
+## Pré-login studio02 e migração
+Antes de pedir novo login: rodar `scripts/preflight_accounts.py` localmente (sem rede), conferir `generation.lock`, jobs `submitting/needs_review/queued` e executar somente o diagnóstico necessário. O primeiro startup migra SQLite com backup em `data/backups/`; nunca apagar banco, tokens ou WAVs antigos. `start.ps1 -EnableLive` nunca retoma pendentes sem `-ResumePending`. Não gastar créditos para testar a nova estrutura de perfis.

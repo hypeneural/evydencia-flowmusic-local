@@ -8,7 +8,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 from datetime import datetime, timezone, timedelta
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +33,8 @@ def session_dir(name: str) -> Path:
 
 def is_authenticated(name: str) -> bool:
     folder = session_dir(name)
-    return folder.is_dir() and not folder.is_symlink() and (folder / "session.json").is_file()
+    token_file = folder / "session.json"
+    return folder.is_dir() and not folder.is_symlink() and token_file.is_file() and not token_file.is_symlink()
 
 def credit_snapshot(name: str) -> dict:
     validate(name)
@@ -44,7 +47,8 @@ def credit_snapshot(name: str) -> dict:
         when = datetime.fromisoformat(record["checked_at"])
         if when.tzinfo is None:
             raise ValueError("Credit check must have a timezone")
-        stale = datetime.now(timezone.utc) - when > CACHE_VALID_FOR
+        age = datetime.now(timezone.utc) - when
+        stale = bool(record.get("invalidated_at")) or age > CACHE_VALID_FOR or age < -timedelta(minutes=5)
         return {"credits_remaining": value, "checked_at": record["checked_at"], "stale": stale}
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return {"credits_remaining": None, "checked_at": None, "stale": True}
@@ -72,6 +76,23 @@ def list_profiles() -> list[dict]:
         for directory in PROFILES.iterdir():
             if directory.is_dir() and not directory.is_symlink() and ALIASES.fullmatch(directory.name):
                 names.add(directory.name)
+    # Database identities survive session loss. The DB stores aliases only;
+    # no passwords, OAuth credentials or duplicated credit snapshot sources.
+    database = DATA / "jobs.db"
+    if database.is_file():
+        try:
+            with closing(sqlite3.connect(database, timeout=3)) as conn:
+                try:
+                    names.update(row[0] for row in conn.execute(
+                        "SELECT alias FROM account_profiles"
+                    ) if ALIASES.fullmatch(row[0]))
+                except sqlite3.OperationalError as exc:
+                    if "no such table" not in str(exc):
+                        raise
+        except sqlite3.DatabaseError:
+            # The inventory must not pretend a broken SQLite file is a valid
+            # fresh credits result; profiles on disk remain queryable.
+            pass
     data = []
     for name in names:
         balance = credit_snapshot(name)
@@ -85,4 +106,25 @@ def list_profiles() -> list[dict]:
 def invalidate_snapshot(name: str) -> None:
     """A generation may consume credits: never show an old balance as fresh."""
     validate(name)
-    (SNAPSHOTS / (name + ".json")).unlink(missing_ok=True)
+    path = SNAPSHOTS / (name + ".json")
+    if not path.is_file():
+        return
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(old, dict) or type(old.get("credits_remaining")) is not int:
+            raise ValueError("Malformed cached credits")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        path.unlink(missing_ok=True)
+        return
+    # Keep the last known balance and timestamp as historical evidence, but
+    # mark it stale as soon as a generation might have spent credits.
+    old["invalidated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    tmp = path.with_suffix(".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(old, handle, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)

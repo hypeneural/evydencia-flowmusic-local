@@ -94,3 +94,8 @@ flowchart LR
     Ledger --> Audit["Verificar perfil e SHA256"]
 ```
 A consulta de saldo não agenda nem executa músicas e a ordenação não altera o `account_profile` dos jobs.
+
+## Persistência normalizada de conta — migração segura
+`mvp.ps1 --profile` -> `mvp_probe.py` limpa overrides de credenciais, fixa `FLOWMUSIC_HOME` -> `profiles.save_snapshot` (cache valor/hora) -> `GET /v1/music/accounts` (inventário).
+
+`POST /v1/music/jobs(account_profile)` -> `queue.create_live` -> `account_profiles.alias` + `jobs.account_profile` (coluna indexada) + payload JSON imutável -> `claim` -> checar concordância payload/coluna -> `mvp_probe.py --profile` -> ledger com perfil + WAV -> auditoria de hash -> completed/needs_review. `queue.migrate` faz backup antes de mudança de esquema e `BEGIN IMMEDIATE` numa transação.

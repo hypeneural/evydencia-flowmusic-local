@@ -117,10 +117,9 @@ def auth(x_local_token: str | None = Header(default=None)) -> None:
         raise HTTPException(401, "Local token required")
 
 def result(row: sqlite3.Row) -> dict:
-    payload = json.loads(row["payload"]) if row["payload"] else {}
     return {
         "job_id": row["id"],
-        "account_profile": payload.get("account_profile", "default"),
+        "account_profile": row["account_profile"],
         "request_id": row["request_id"],
         "status": row["state"],
         "result": json.loads(row["result"]) if row["result"] else None,
@@ -170,9 +169,10 @@ def create(req: MusicRequest):
     with MUTEX:
         with db() as connection:
             # SQLite UNIQUE constraint is authoritative across processes.
+            connection.execute("INSERT OR IGNORE INTO account_profiles(alias) VALUES(?)", (req.account_profile,))
             cursor = connection.execute(
-                "INSERT OR IGNORE INTO jobs(id,request_id,hash,payload,state) VALUES(?,?,?,?,?)",
-                (job_id, req.request_id, digest, payload, "queued"),
+                "INSERT OR IGNORE INTO jobs(id,request_id,hash,payload,state,account_profile) VALUES(?,?,?,?,?,?)",
+                (job_id, req.request_id, digest, payload, "queued", req.account_profile),
             )
             row = connection.execute(
                 "SELECT * FROM jobs WHERE request_id=?", (req.request_id,)

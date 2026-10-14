@@ -28,3 +28,8 @@ SQLite stores prompts locally and requires suitable directory NTFS permissions. 
 Cada conta usa sua própria sessão OAuth em `FLOWMUSIC_HOME`, reduzindo conflitos de renovação de token entre contas. Inventário de créditos contém apenas alias/valor/data e pode estar desatualizado; nunca implica acesso válido.
 
 Não realizar consultas de saldo durante uma geração ativa; scripts bloqueiam login/consulta se `generation.lock` existir. Um erro remoto incerto bloqueia a fila; nunca alternar automaticamente de perfil. Proteja também `data/flowmusic-profiles/`, `data/account-snapshots/` e o banco SQLite com ACLs NTFS em Windows compartilhado.
+
+## Auditoria crítica antes da segunda conta (14/10/2026)
+O upstream `src/lib/auth.mjs` prioriza `FLOWMUSIC_TOKEN` caso esteja no ambiente, e `src/lib/client.mjs` aceita `FLOWMUSIC_BASE` para substituir o destino. O probe remove **ambas** as variáveis herdadas antes de executar o CLI; caso contrário, `FLOWMUSIC_HOME` isolado não garantiria a identidade da conta autenticada. Não compartilhe `data/flowmusic-profiles/`, `data/flowmusic-session/`, `data/backups/` ou `data/jobs.db` em pastas públicas.
+
+O `icacls /inheritance:r` remove apenas ACEs herdadas. Entradas de acesso **explicitamente concedidas** podem continuar; confira as ACLs do perfil antes e depois do login secundário. <https://learn.microsoft.com/windows-server/administration/windows-commands/icacls>. O novo preflight faz inspeção offline de integridade/estados mas não é uma auditoria completa das permissões NTFS.

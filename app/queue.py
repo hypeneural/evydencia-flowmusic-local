@@ -9,6 +9,8 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
+from datetime import datetime, timezone
 import subprocess
 import sys
 import threading
@@ -38,9 +40,23 @@ def event(conn: Any, job_id: str, name: str, state: str) -> None:
 
 
 def migrate() -> None:
-    """Non-destructive migration of the original MVP SQLite database."""
+    """Transactional account schema upgrade. Backup the real DB before first upgrade."""
     with api.db() as conn:
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        if "account_profile" not in existing:
+            from contextlib import closing
+            backups = api.DATA / "backups"
+            backups.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup = backups / f"jobs-before-account-profiles-{stamp}.sqlite3"
+            if backup.exists():
+                raise RuntimeError("Account schema backup already exists; review before migrating")
+            with closing(sqlite3.connect(backup)) as dest:
+                # SQLite online backup includes committed WAL content safely.
+                conn.backup(dest)
+        conn.execute("BEGIN IMMEDIATE")
         columns = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        needs_backfill = "account_profile" not in columns
         if "run_mode" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'mock'")
         if "approved_live" not in columns:
@@ -49,6 +65,26 @@ def migrate() -> None:
             conn.execute("ALTER TABLE jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0")
         if "updated_at" not in columns:
             conn.execute("ALTER TABLE jobs ADD COLUMN updated_at TEXT")
+        if "account_profile" not in columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN account_profile TEXT NOT NULL DEFAULT 'default'")
+        conn.execute("""CREATE TABLE IF NOT EXISTS account_profiles (
+            alias TEXT PRIMARY KEY,
+            registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        # Backfill only the indexed account alias, retaining all existing
+        # hashes, timestamps, results, ledger files and job states.
+        for row in (list(conn.execute("SELECT id,payload,account_profile FROM jobs")) if needs_backfill else []):
+            try:
+                parsed = json.loads(row["payload"])
+                label = parsed.get("account_profile", "default") if isinstance(parsed, dict) else "default"
+                profiles.validate(label)
+            except (ValueError, TypeError, AttributeError):
+                label = "default"
+            if row["account_profile"] != label:
+                conn.execute("UPDATE jobs SET account_profile=? WHERE id=?", (label, row["id"]))
+            conn.execute("INSERT OR IGNORE INTO account_profiles(alias) VALUES(?)", (label,))
+        conn.execute("INSERT OR IGNORE INTO account_profiles(alias) VALUES('default')")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_account_profile ON jobs(account_profile,created_at)")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS job_events(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,10 +138,11 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
             raise api.HTTPException(409, "Existing MVP ledger requires manual reconciliation")
         if pending >= 25:
             raise api.HTTPException(429, "Local queue full (25); reduce requests")
+        conn.execute("INSERT OR IGNORE INTO account_profiles(alias) VALUES(?)", (profile,))
         conn.execute(
-            """INSERT INTO jobs(id,request_id,hash,payload,state,run_mode,approved_live,updated_at)
-               VALUES(?,?,?,?,?,'cli',1,CURRENT_TIMESTAMP)""",
-            (job_id, req.request_id, digest, payload, "queued"),
+            """INSERT INTO jobs(id,request_id,hash,payload,state,run_mode,approved_live,account_profile,updated_at)
+               VALUES(?,?,?,?,?,'cli',1,?,CURRENT_TIMESTAMP)""",
+            (job_id, req.request_id, digest, payload, "queued", profile),
         )
         event(conn, job_id, "job.accepted", "queued")
     return api.result(api.get_row(job_id))
@@ -137,13 +174,15 @@ def finish(job_id: str, state: str, artifacts: list[dict] | None = None) -> None
     if state not in {"completed", "needs_review"}:
         raise ValueError("Unsupported worker state")
     with api.db() as conn:
-        conn.execute(
+        updated = conn.execute(
             """UPDATE jobs SET state=?,result=?,error=?,updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND state='submitting'""",
             (state, json.dumps({"artifacts": artifacts}, ensure_ascii=False) if artifacts else None,
              "Remote outcome uncertain; reconcile MVP ledger and provider library" if state != "completed" else None,
              job_id),
         )
+        if updated.rowcount != 1:
+            raise RuntimeError("Job state changed during execution; manual reconciliation required")
         event(conn, job_id, "job.completed" if state == "completed" else "job.needs_review", state)
 
 
@@ -180,9 +219,15 @@ def execute(record: dict, *, runner=None) -> None:
     global BLOCKED
     req = json.loads(record["payload"])
     request_id = record["request_id"]
+    # The indexed account must match the persisted payload before touching OAuth.
+    profile = req.get("account_profile", "default")
+    if profile != record["account_profile"]:
+        finish(record["id"], "needs_review")
+        BLOCKED = "account_profile_mismatch"
+        return
     command = [
         sys.executable, str(PROBE), "--mode", "generate",
-        "--request-id", request_id, "--profile", req.get("account_profile", "default"), "--prompt", req["prompt"],
+        "--request-id", request_id, "--profile", profile, "--prompt", req["prompt"],
         "--model", req.get("model", "Lyria 3.5"),
         "--seconds", str(req.get("duration_seconds", 120)),
         "--format", req.get("output_format", "wav"), "--approve-live",
@@ -191,12 +236,12 @@ def execute(record: dict, *, runner=None) -> None:
         command.append("--instrumental")
     process = runner if runner is not None else subprocess.run
     try:
-        profiles.invalidate_snapshot(req.get("account_profile", "default"))
+        profiles.invalidate_snapshot(profile)
         done = process(command, cwd=str(api.ROOT), capture_output=True,
                        text=True, timeout=1320, check=False)
         if done.returncode != 0:
             raise RuntimeError("MVP probe did not complete")
-        artifacts = verified_artifacts(request_id, req.get("account_profile", "default"))
+        artifacts = verified_artifacts(request_id, profile)
     except Exception:
         # Any failure (including timeout) could follow remote acceptance.
         finish(record["id"], "needs_review")
@@ -274,12 +319,14 @@ def reconcile(job_id: str, resolution: str) -> dict:
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             raise api.HTTPException(409, "Completed MVP ledger and matching audio required") from None
     with api.db() as conn:
-        conn.execute(
+        changed = conn.execute(
             """UPDATE jobs SET state=?, result=?, error=?, updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND state='needs_review'""",
             (resolution, json.dumps({"artifacts": artifacts}) if artifacts else None,
              "Reviewed and abandoned; no re-submission performed" if resolution == "abandoned" else None, job_id),
         )
+        if changed.rowcount != 1:
+            raise api.HTTPException(409, "Job changed during manual reconciliation")
         event(conn, job_id, "job.reconciled", resolution)
     return api.result(api.get_row(job_id))
 

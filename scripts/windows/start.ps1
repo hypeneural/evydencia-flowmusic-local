@@ -1,8 +1,13 @@
-param([switch]$EnableLive)
+param([switch]$EnableLive, [switch]$ResumePending)
 $ErrorActionPreference='Stop'
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot '../..'))
 if (!(Test-Path .venv/Scripts/python.exe)) { throw 'Execute install.ps1 antes.' }
 if ($EnableLive) {
+  # Offline safety gate: never execute old approved queued jobs silently.
+  $checkArgs = @('scripts/preflight_accounts.py')
+  if ($ResumePending) { $checkArgs += '--allow-queued' }
+  & .\.venv\Scripts\python.exe @checkArgs
+  if ($LASTEXITCODE -ne 0) { throw 'Preflight bloqueou LIVE. Revise jobs, lock, integridade DB e sessao antes de iniciar.' }
   if (!(Test-Path vendor/flowmusic-cli/bin/flowmusic.mjs)) { throw 'CLI upstream nao instalado.' }
   Write-Host 'Perfis de conta sao selecionados por pedido; cada perfil precisa de sua propria sessao.'
   $env:FLOWMUSIC_PROVIDER = 'cli'
