@@ -30,3 +30,5 @@ Executar no **Windows** somente depois de reconciliar com as alterações atuais
 **Não publicar credenciais** do `data/http-sessions` nem token da API. Sem GitHub Actions, Redis, Docker, workers paralelos, CAPTCHA solver, retries de POST ou alterações de código do FlowMusic.
 
 Referências: [RohaanA/google-flow-mcp](https://github.com/RohaanA/google-flow-mcp), [TheSmallHanCat/flow2api](https://github.com/TheSmallHanCat/flow2api), [Playwright auth](https://playwright.dev/docs/auth), [Google Flow credits](https://support.google.com/flow/answer/16526234?hl=pt-BR).
+
+**Correção de segurança:** a prova de vídeo NÃO aceita `-AcceptEstimatedQuote`. Se só existir estimativa local, o Antigravity deve implementar a leitura de cotação observada e interromper a geração até isso estar comprovado. O usuário autorizou uma execução real, não uma cobrança de valor indeterminado.
