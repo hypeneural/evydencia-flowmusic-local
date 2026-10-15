@@ -255,11 +255,21 @@ def accounts_inventory(response: Response):
             row["alias"]: dict(row) for row in connection.execute(
                 "SELECT alias,enabled,auto_select FROM account_profiles")
         }
+        pending = {
+            row["account_profile"]:row["num"] for row in connection.execute(
+                """SELECT account_profile,COUNT(*) AS num FROM jobs
+                   WHERE run_mode='cli' AND state IN ('queued','submitting',
+                            'generating','downloading','validating','needs_review')
+                   GROUP BY account_profile""")
+        }
     for profile in inventory:
         options = policy.get(profile["profile"], {})
         profile["enabled"] = bool(options.get("enabled", 1))
         profile["auto_select"] = bool(options.get("auto_select", 0))
+        profile["blocking_jobs_count"] = pending.get(profile["profile"], 0)
         reasons = []
+        if profile["blocking_jobs_count"]:
+            reasons.append("profile_has_pending_or_uncertain_job")
         if not profile["enabled"]:
             reasons.append("account_disabled")
         if not profile["auto_select"]:
