@@ -138,6 +138,12 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
         # An existing request must remain replayable even if a session was removed.
         if not profiles.is_authenticated(profile):
             raise api.HTTPException(409, "Selected account has no local session; log in manually first")
+        policy = conn.execute("SELECT enabled FROM account_profiles WHERE alias=?", (profile,)).fetchone()
+        if policy and not policy["enabled"]:
+            raise api.HTTPException(409, "Selected music account is disabled")
+        if conn.execute("""SELECT 1 FROM jobs WHERE account_profile=? AND run_mode='cli'
+                           AND state='needs_review' LIMIT 1""", (profile,)).fetchone():
+            raise api.HTTPException(409, "Selected music account has an unresolved job")
         pending = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE run_mode='cli' AND state IN ('queued','submitting','generating')"
         ).fetchone()[0]
@@ -163,8 +169,14 @@ def claim() -> dict | None:
         if conn.execute("SELECT 1 FROM jobs WHERE run_mode='cli' AND state='submitting' LIMIT 1").fetchone():
             return None
         row = conn.execute(
-            """SELECT * FROM jobs WHERE state='queued' AND run_mode='cli'
-               AND approved_live=1 ORDER BY created_at, rowid LIMIT 1"""
+            """SELECT j.* FROM jobs j
+               LEFT JOIN account_profiles a ON a.alias=j.account_profile
+               WHERE j.state='queued' AND j.run_mode='cli'
+               AND j.approved_live=1 AND COALESCE(a.enabled,1)=1
+               AND NOT EXISTS (SELECT 1 FROM jobs old
+                   WHERE old.run_mode='cli' AND old.account_profile=j.account_profile
+                     AND old.state='needs_review')
+               ORDER BY j.created_at, j.rowid LIMIT 1"""
         ).fetchone()
         if row is None:
             return None
@@ -252,7 +264,8 @@ def execute(record: dict, *, runner=None) -> None:
     except Exception:
         # Any failure (including timeout) could follow remote acceptance.
         finish(record["id"], "needs_review")
-        BLOCKED = "needs_review"
+        # Quarantine only this account. New independent requests on another
+        # authorized profile can continue; the failed request is never rerun.
         return
     finish(record["id"], "completed", artifacts)
 
@@ -265,12 +278,8 @@ def run_once(*, runner=None) -> bool:
     if (api.DATA / "mvp" / "generation.lock").exists():
         BLOCKED = "existing_generation_lock"
         return False
-    with api.db() as conn:
-        if conn.execute(
-            "SELECT 1 FROM jobs WHERE run_mode='cli' AND state='needs_review' LIMIT 1"
-        ).fetchone():
-            BLOCKED = "unresolved_job"
-            return False
+    # An unresolved outcome blocks its OWN profile, not other independent
+    # profiles. A global provider lock/worker I/O failure still blocks all.
     record = claim()
     if not record:
         return False
