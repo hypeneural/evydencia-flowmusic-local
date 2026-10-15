@@ -206,3 +206,43 @@ def test_profile_explicit_and_existing_job_replay_without_session(environment):
     blocked = client.post("/v1/music/jobs", headers=headers,
                           json={**request(), "account_profile": "studio03"})
     assert blocked.status_code == 409
+
+
+def test_music_account_eligibility_contract(environment):
+    """The gateway must receive eligible=true only for live local preflight."""
+    from datetime import datetime, timezone, timedelta
+    client, headers = environment
+    session = profiles.session_dir("default") / "session.json"
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+    session.write_text(json.dumps({"email": "test@example.invalid",
+                                   "expires_at": expires}), encoding="utf-8")
+    profiles.save_snapshot("default", 97)
+    result = client.get("/v1/music/accounts", headers=headers)
+    assert result.status_code == 200
+    row = next(p for p in result.json()["profiles"] if p["profile"] == "default")
+    assert row["eligible"] is True
+    assert row["eligibility_basis"] == "local_preflight_only"
+    assert row["credits_remaining"] == 97
+
+    # Provider mock must NEVER make a profile selectable as a real live account.
+    from app import queue
+    old_mode = api.get_provider()
+    try:
+        import os
+        os.environ["FLOWMUSIC_PROVIDER"] = "mock"
+        blocked = client.get("/v1/music/accounts", headers=headers).json()
+        p = next(x for x in blocked["profiles"] if x["profile"] == "default")
+        assert p["eligible"] is False
+        assert "music_live_provider_disabled" in p["eligibility_reasons"]
+    finally:
+        os.environ["FLOWMUSIC_PROVIDER"] = old_mode
+
+
+def test_music_session_presence_does_not_prove_eligible(environment):
+    client, headers = environment
+    profiles.save_snapshot("default", 900)
+    result = client.get("/v1/music/accounts", headers=headers).json()
+    p = next(x for x in result["profiles"] if x["profile"] == "default")
+    assert p["session_present"] is True
+    assert p["eligible"] is False
+    assert "session_not_locally_current" in p["eligibility_reasons"]
