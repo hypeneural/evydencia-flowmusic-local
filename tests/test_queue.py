@@ -217,6 +217,9 @@ def test_music_account_eligibility_contract(environment):
     session.write_text(json.dumps({"email": "test@example.invalid",
                                    "expires_at": expires}), encoding="utf-8")
     profiles.save_snapshot("default", 97)
+    optin = client.post("/v1/music/accounts/default/routing", headers=headers,
+                        json={"enabled": True, "auto_select": True})
+    assert optin.status_code == 200
     result = client.get("/v1/music/accounts", headers=headers)
     assert result.status_code == 200
     row = next(p for p in result.json()["profiles"] if p["profile"] == "default")
