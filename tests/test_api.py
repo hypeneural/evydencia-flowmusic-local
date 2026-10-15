@@ -113,3 +113,20 @@ def test_token_file_permission_on_posix(client):
     if os.name == "nt":
         pytest.skip("POSIX-only permission check")
     assert main.TOKEN.stat().st_mode & 0o077 == 0
+
+
+def test_get_job_by_request_id_is_direct_and_never_generates(client):
+    api, headers = client
+    payload = unique_payload()
+    created = api.post("/v1/music/jobs", json=payload, headers=headers)
+    assert created.status_code == 202
+    expected = created.json()["job_id"]
+    denied = api.get(f"/v1/music/jobs/by-request/{payload['request_id']}")
+    assert denied.status_code == 401
+    found = api.get(f"/v1/music/jobs/by-request/{payload['request_id']}", headers=headers)
+    assert found.status_code == 200
+    assert found.json()["job_id"] == expected
+    assert found.json()["request_id"] == payload["request_id"]
+    assert api.get("/v1/music/jobs/by-request/unknown-xyz",headers=headers).status_code == 404
+    assert api.get("/v1/music/jobs/by-request/invalid!",headers=headers).status_code == 422
+    assert api.get("/v1/music/jobs/by-request/..",headers=headers).status_code == 422
