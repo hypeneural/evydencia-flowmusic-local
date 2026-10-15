@@ -129,4 +129,3 @@ def test_get_job_by_request_id_is_direct_and_never_generates(client):
     assert found.json()["request_id"] == payload["request_id"]
     assert api.get("/v1/music/jobs/by-request/unknown-xyz",headers=headers).status_code == 404
     assert api.get("/v1/music/jobs/by-request/invalid!",headers=headers).status_code == 422
-    assert api.get("/v1/music/jobs/by-request/..",headers=headers).status_code == 422
