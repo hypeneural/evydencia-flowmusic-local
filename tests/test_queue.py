@@ -246,3 +246,46 @@ def test_music_session_presence_does_not_prove_eligible(environment):
     assert p["session_present"] is True
     assert p["eligible"] is False
     assert "session_not_locally_current" in p["eligibility_reasons"]
+
+
+def test_uncertain_music_job_only_blocks_own_profile(environment):
+    client, headers = environment
+    studio=profiles.session_dir("studio02")
+    studio.mkdir(parents=True)
+    (studio/"session.json").write_text("{}", encoding="utf-8")
+    first={**request(), "account_profile":"default"}
+    second={**request(), "account_profile":"studio02"}
+    jid1=client.post("/v1/music/jobs",headers=headers,json=first).json()["job_id"]
+    jid2=client.post("/v1/music/jobs",headers=headers,json=second).json()["job_id"]
+    a=queue.claim()
+    assert a["id"]==jid1
+    queue.finish(jid1,"needs_review")
+    b=queue.claim()
+    assert b is not None and b["id"]==jid2
+    queue.finish(jid2,"completed",[{"path":"fixture","sha256":"fixture"}])
+    assert client.get(f"/v1/music/jobs/{jid1}",headers=headers).json()["status"]=="needs_review"
+    assert client.get(f"/v1/music/jobs/{jid2}",headers=headers).json()["status"]=="completed"
+    blocked={**request(),"account_profile":"default"}
+    assert client.post("/v1/music/jobs",headers=headers,json=blocked).status_code==409
+
+
+def test_music_opt_in_policy_does_not_change_existing_jobs(environment):
+    client,headers=environment
+    from datetime import datetime,timezone,timedelta
+    p=profiles.session_dir("default")/"session.json"
+    p.write_text(json.dumps({"expires_at":(datetime.now(timezone.utc)+timedelta(hours=1)).timestamp()}),
+                 encoding="utf-8")
+    profiles.save_snapshot("default",123)
+    before=client.get("/v1/music/accounts",headers=headers).json()["profiles"]
+    existing=next(x for x in before if x["profile"]=="default")
+    assert existing["eligible"] is False
+    assert "auto_selection_not_enabled" in existing["eligibility_reasons"]
+    changed=client.post("/v1/music/accounts/default/routing",headers=headers,
+                        json={"enabled":True,"auto_select":True})
+    assert changed.status_code==200
+    assert changed.json()["affects_existing_jobs"] is False
+    after=client.get("/v1/music/accounts",headers=headers).json()["profiles"]
+    current=next(x for x in after if x["profile"]=="default")
+    assert current["eligible"] is True
+    denied=client.post("/v1/music/accounts/default/routing",json={"enabled":False,"auto_select":False})
+    assert denied.status_code==401
