@@ -53,7 +53,7 @@
     tr.appendChild(cell);
     const routing = document.createElement("td");
     routing.appendChild(el("span", "pill " + (profile.eligible === true ? "ok" : "warn"),
-      profile.eligible === true ? "Pré-apta" : "Indisponível"));
+      profile.eligible === true ? "Pré-apta" : (profile.enabled === false ? "Desabilitada" : "Indisponível")));
     const explanations = Array.isArray(profile.eligibility_reasons) ? profile.eligibility_reasons : [];
     if (explanations.length) routing.appendChild(
       el("div", "muted", explanations.map(x => ({
@@ -61,7 +61,10 @@
         session_not_present:"Sem sessão salva",
         session_not_locally_current:"Token sem validade local comprovada",
         credit_snapshot_stale:"Saldo antigo",
-        insufficient_known_credits:"Sem saldo suficiente"
+        insufficient_known_credits:"Sem saldo suficiente",
+        account_disabled:"Conta desabilitada",
+        auto_selection_not_enabled:"Seleção automática desligada",
+        profile_has_pending_or_uncertain_job:"Job pendente ou incerto nesta conta"
       }[x] || x)).join(" · ")));
     tr.appendChild(routing);
     const credits = document.createElement("td");
