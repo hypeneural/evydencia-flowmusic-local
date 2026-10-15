@@ -253,12 +253,39 @@ def execute(record: dict, *, runner=None) -> None:
     ]
     if req.get("instrumental"):
         command.append("--instrumental")
-    process = runner if runner is not None else subprocess.run
     try:
         profiles.invalidate_snapshot(profile)
-        done = process(command, cwd=str(api.ROOT), capture_output=True,
-                       text=True, timeout=1320, check=False)
-        if done.returncode != 0:
+        if runner is not None:
+            # Existing tests inject a runner; no provider process is spawned.
+            done = runner(command, cwd=str(api.ROOT), capture_output=True,
+                          text=True, timeout=1320, check=False)
+            rc = done.returncode
+        else:
+            # subprocess.run(timeout=) can leave Node/Chrome grandchildren on
+            # Windows. Own only this probe's process tree, not user Chrome.
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            child = subprocess.Popen(
+                command, cwd=str(api.ROOT), stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, creationflags=flags)
+            try:
+                rc = child.wait(timeout=1320)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=10, check=False)
+                    except (OSError, subprocess.TimeoutExpired):
+                        child.kill()
+                else:
+                    child.kill()
+                try:
+                    child.wait(timeout=10)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                raise
+        if rc != 0:
             raise RuntimeError("MVP probe did not complete")
         artifacts = verified_artifacts(request_id, profile)
     except Exception:
