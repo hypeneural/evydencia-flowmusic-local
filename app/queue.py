@@ -71,6 +71,13 @@ def migrate() -> None:
             alias TEXT PRIMARY KEY,
             registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Existing Windows installations retain all aliases and OAuth files.
+        # Automatic routing requires explicit profile-level opt-in.
+        policy_columns={row[1] for row in conn.execute("PRAGMA table_info(account_profiles)")}
+        if "enabled" not in policy_columns:
+            conn.execute("ALTER TABLE account_profiles ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+        if "auto_select" not in policy_columns:
+            conn.execute("ALTER TABLE account_profiles ADD COLUMN auto_select INTEGER NOT NULL DEFAULT 0")
         # Backfill only the indexed account alias, retaining all existing
         # hashes, timestamps, results, ledger files and job states.
         for row in (list(conn.execute("SELECT id,payload,account_profile FROM jobs")) if needs_backfill else []):
