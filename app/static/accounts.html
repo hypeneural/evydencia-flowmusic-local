@@ -48,7 +48,7 @@
         <div>
           <p class="eyebrow">INVENTÁRIO</p>
           <h2 id="accounts-heading">Contas cadastradas</h2>
-          <p class="subtitle">Um arquivo de sessão indica login salvo, não necessariamente conexão online. Consultas de créditos são manuais.</p>
+          <p class="subtitle">O estado local do token não comprova login atual no Google. A elegibilidade exige modo LIVE habilitado, token local não expirado e saldo recente; não há troca de conta depois do envio.</p>
         </div>
         <button class="button secondary" type="button" id="refresh">Atualizar painel</button>
       </div>
@@ -58,7 +58,8 @@
             <tr>
               <th scope="col">Perfil</th>
               <th scope="col">E-mail</th>
-              <th scope="col">Sessão</th>
+              <th scope="col">Sessão (local)</th>
+              <th scope="col">Apta à fila?</th>
               <th scope="col" class="number">Créditos</th>
               <th scope="col">Última consulta</th>
             </tr>
@@ -67,7 +68,8 @@
         </table>
       </div>
       <div class="panel-bottom">
-        <p id="inventory-note">A ordenação considera o saldo recente conhecido e não escolhe automaticamente uma conta para geração.</p>
+        <p id="inventory-note">Seleção automática só no gateway para novo pedido, com conta previamente habilitada e checagens válidas. Nunca há failover de pedido incerto.</p>
+        <p id="music-live-state" role="status">Modo do motor ainda não consultado.</p>
         <p id="last-update"></p>
       </div>
     </section>
