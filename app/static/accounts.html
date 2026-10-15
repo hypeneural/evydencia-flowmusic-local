@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Contas | Evydencia FlowMusic</title>
+  <link rel="stylesheet" href="/assets/accounts.css">
+  <script defer src="/assets/accounts.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div class="brand-icon" aria-hidden="true">♫</div>
+      <div>
+        <p class="eyebrow">EVYDENCIA · FLOWMUSIC LOCAL</p>
+        <h1>Painel de contas</h1>
+        <p class="subtitle">Sessões Google e últimos créditos conhecidos em um só lugar.</p>
+      </div>
+      <div class="local-only"><span class="dot"></span> SOMENTE LOCALHOST</div>
+    </header>
+
+    <section class="access" aria-label="Autenticação do painel">
+      <div class="access-copy">
+        <h2>Acesso local protegido</h2>
+        <p>Informe o token do arquivo <code>data/local-token.txt</code>. Ele fica apenas nesta aba, em memória, e nunca é gravado no navegador.</p>
+      </div>
+      <form id="access-form" autocomplete="off">
+        <label for="api-token">Token da API</label>
+        <div class="access-fields">
+          <input id="api-token" type="password" autocomplete="off" spellcheck="false" required placeholder="Cole o token local" aria-describedby="access-message">
+          <button type="submit" class="button primary">Conectar</button>
+          <button type="button" id="disconnect" class="button secondary" disabled>Desconectar</button>
+        </div>
+      </form>
+      <p id="access-message" class="message" role="status">Nenhum dado de conta será exibido sem autenticação.</p>
+    </section>
+
+    <section class="metrics" id="metrics" aria-label="Resumo de contas" hidden>
+      <div class="metric"><span>Perfis conhecidos</span><strong id="count-profiles">—</strong></div>
+      <div class="metric"><span>Sessões salvas</span><strong id="count-sessions">—</strong></div>
+      <div class="metric"><span>Saldo recente conhecido</span><strong id="sum-credits">—</strong><small>Exclui valores desatualizados</small></div>
+      <div class="metric"><span>Fila de geração</span><strong id="queue-state">—</strong><small id="queue-detail">Sem consulta</small></div>
+    </section>
+
+    <section class="panel" id="account-panel" hidden aria-labelledby="accounts-heading">
+      <div class="panel-top">
+        <div>
+          <p class="eyebrow">INVENTÁRIO</p>
+          <h2 id="accounts-heading">Contas cadastradas</h2>
+          <p class="subtitle">Um arquivo de sessão indica login salvo, não necessariamente conexão online. Consultas de créditos são manuais.</p>
+        </div>
+        <button class="button secondary" type="button" id="refresh">Atualizar painel</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Perfil</th>
+              <th scope="col">E-mail</th>
+              <th scope="col">Sessão</th>
+              <th scope="col" class="number">Créditos</th>
+              <th scope="col">Última consulta</th>
+            </tr>
+          </thead>
+          <tbody id="accounts-body"></tbody>
+        </table>
+      </div>
+      <div class="panel-bottom">
+        <p id="inventory-note">A ordenação considera o saldo recente conhecido e não escolhe automaticamente uma conta para geração.</p>
+        <p id="last-update"></p>
+      </div>
+    </section>
+    <footer class="footer">
+      <span>AI-first · FastAPI + SQLite · Sem geração ou autenticação automática nesta tela</span>
+      <a href="/docs" rel="nofollow">API Swagger</a>
+    </footer>
+  </main>
+</body>
+</html>
