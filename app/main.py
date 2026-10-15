@@ -250,8 +250,20 @@ def accounts_inventory(response: Response):
     from app import profiles, queue
     live_available = queue.enabled()
     inventory = profiles.list_profiles()
+    with db() as connection:
+        policy = {
+            row["alias"]: dict(row) for row in connection.execute(
+                "SELECT alias,enabled,auto_select FROM account_profiles")
+        }
     for profile in inventory:
+        options = policy.get(profile["profile"], {})
+        profile["enabled"] = bool(options.get("enabled", 1))
+        profile["auto_select"] = bool(options.get("auto_select", 0))
         reasons = []
+        if not profile["enabled"]:
+            reasons.append("account_disabled")
+        if not profile["auto_select"]:
+            reasons.append("auto_selection_not_enabled")
         if not live_available:
             reasons.append("music_live_provider_disabled")
         if profile["session_present"] is not True:
@@ -271,6 +283,37 @@ def accounts_inventory(response: Response):
             "selection": "eligible_profiles_for_new_gateway_requests_only",
             "automatic_failover": False,
             "note": "Local eligibility is not live Google authentication or authorization; balances are cached."}
+
+
+class MusicAccountRouting(BaseModel):
+    enabled: bool = True
+    auto_select: bool = False
+
+
+@app.post("/v1/music/accounts/{alias}/routing", dependencies=[Depends(auth)])
+def configure_music_account_routing(alias: str, body: MusicAccountRouting):
+    """Local opt-in only. No OAuth, provider calls or session-file writes."""
+    from app import profiles
+    try:
+        profiles.validate(alias)
+    except ValueError:
+        raise HTTPException(422, "invalid_music_profile") from None
+    known = {r["profile"] for r in profiles.list_profiles()}
+    if alias not in known:
+        raise HTTPException(404, "music_profile_not_registered")
+    with db() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if not body.enabled and connection.execute(
+            """SELECT 1 FROM jobs WHERE account_profile=? AND run_mode='cli'
+               AND state IN ('queued','submitting','generating','downloading','validating')
+               LIMIT 1""", (alias,)
+        ).fetchone():
+            raise HTTPException(409, "music_profile_has_active_job")
+        connection.execute("INSERT OR IGNORE INTO account_profiles(alias) VALUES(?)", (alias,))
+        connection.execute("UPDATE account_profiles SET enabled=?,auto_select=? WHERE alias=?",
+                           (int(body.enabled), int(body.auto_select), alias))
+    return {"profile": alias, "enabled": body.enabled, "auto_select": body.auto_select,
+            "affects_existing_jobs": False, "provider_login_changed": False}
 
 
 @app.get("/v1/music/queue", dependencies=[Depends(auth)])
