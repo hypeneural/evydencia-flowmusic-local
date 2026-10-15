@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -256,6 +257,20 @@ def accounts_inventory(response: Response):
 def queue_status():
     from app import queue
     return queue.overview()
+
+@app.get("/v1/music/jobs/by-request/{request_id}", dependencies=[Depends(auth)])
+def get_job_by_request_id(request_id: str):
+    """Read-only, indexed reconciliation for gateway timeouts; no generation."""
+    if len(request_id) < 3 or len(request_id) > 120 or re.fullmatch(r"[a-zA-Z0-9._:-]+", request_id) is None:
+        raise HTTPException(422, "Invalid request_id")
+    with db() as connection:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE request_id=? LIMIT 1", (request_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Unknown request_id")
+    return result(row)
+
 
 @app.get("/v1/music/jobs/{job_id}/events", dependencies=[Depends(auth)])
 def job_events(job_id: str):
