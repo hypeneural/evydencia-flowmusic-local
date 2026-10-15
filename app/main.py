@@ -247,10 +247,30 @@ def accounts_inventory(response: Response):
     """Only public session metadata, last-known credits and alias; never tokens."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    from app import profiles
-    return {"profiles": profiles.list_profiles(),
-            "selection": "manual_only", "automatic_failover": False,
-            "note": "Credit balances are cached observations, not live guarantees"}
+    from app import profiles, queue
+    live_available = queue.enabled()
+    inventory = profiles.list_profiles()
+    for profile in inventory:
+        reasons = []
+        if not live_available:
+            reasons.append("music_live_provider_disabled")
+        if profile["session_present"] is not True:
+            reasons.append("session_not_present")
+        # Locally unexpired token metadata and a recent provider account check
+        # are only preflight indicators, NEVER proof of generation permission.
+        if profile["session_status"] != "access_valid_locally":
+            reasons.append("session_not_locally_current")
+        if profile["stale"] or not profile["recent_account_check"]:
+            reasons.append("credit_snapshot_stale")
+        if type(profile["credits_remaining"]) is not int or profile["credits_remaining"] < 1:
+            reasons.append("insufficient_known_credits")
+        profile["eligible"] = not reasons
+        profile["eligibility_reasons"] = reasons
+        profile["eligibility_basis"] = "local_preflight_only"
+    return {"profiles": inventory, "live_enabled": live_available,
+            "selection": "eligible_profiles_for_new_gateway_requests_only",
+            "automatic_failover": False,
+            "note": "Local eligibility is not live Google authentication or authorization; balances are cached."}
 
 
 @app.get("/v1/music/queue", dependencies=[Depends(auth)])
