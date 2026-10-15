@@ -15,6 +15,13 @@ OAuth como autenticação do painel**: o token é uma credencial local distinta.
 - `GET /v1/music/queue` (**requer X-Local-Token**): estado da fila existente.
 - Nada atualiza créditos ou login automaticamente: botão de recarregar só faz
   GETs locais.
+- `GET /v1/music/accounts` inclui `eligible`, `eligibility_reasons`,
+  `blocking_jobs_count`, `enabled` e `auto_select`. **Eligible é apenas
+  pré-checagem local**, exige LIVE do motor, opt-in, sessão com token
+  localmente no prazo, crédito fresco e nenhuma pendência neste perfil.
+- `POST /v1/music/accounts/{alias}/routing` requer X-Local-Token Music
+  e altera apenas a política local (`enabled`, `auto_select`) no SQLite;
+  nunca faz OAuth ou transfere conta, e não altera jobs existentes.
 
 ## Colunas
 Perfil | E-mail | Status da sessão local | Últimos créditos | Última consulta.
@@ -61,3 +68,33 @@ Referências técnicas: FastAPI `HTMLResponse`/`StaticFiles`,
 MDN `Content-Security-Policy`, fonte upstream
 `deluxebear/flowmusic-cli/src/lib/auth.mjs` (normalização de `email`,
 `expires_at` e `refresh_token`).
+
+
+## Integração multicontas com o gateway :8766
+
+A PR #3 exporta consulta indexada `GET /v1/music/jobs/by-request/{id}`.
+O gateway `:8766` obtém a lista Music com seu próprio token de integração,
+escolhe entre as contas **opted-in e pré-aptas**, grava o alias em
+`audio_dispatches` antes do POST e nunca troca de perfil se o envio
+ficar incerto. O motor musical ainda valida a sessão/provedor ao executar.
+
+Um job musical `needs_review` agora impede novos pedidos **na mesma
+conta**, sem congelar outras contas com pedidos realmente independentes.
+A geração global segue serializada; cada `request_id` preserva seu
+alias original. A desativação de uma conta com jobs ativos é recusada.
+
+Painel unificado read-only do gateway Flow: `http://127.0.0.1:8766/painel`.
+Painel Music deste serviço: `http://127.0.0.1:8765/painel-contas`.
+
+**Ordem de homologação Windows:** primeiro PR #1 Music, depois PR #3,
+em seguida PR #2 e PR #4 Flow. Backup do banco `data/jobs.db` antes de
+rodar a migração de `account_profiles(enabled,auto_select)`. Ela preserva
+`session.json`, jobs históricos e saldos, e deixa opt-in desligado.
+
+Testes dirigidos:
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_api.py tests/test_queue.py -q
+node --check app/static/accounts.js
+```
+Não declarar Music LIVE se `FLOWMUSIC_PROVIDER=mock`. Não gravar tokens
+nem credenciais no GitHub.
