@@ -215,15 +215,20 @@ def claim() -> dict | None:
         return None
 
 
-def finish(job_id: str, state: str, artifacts: list[dict] | None = None) -> None:
+def finish(job_id: str, state: str, artifacts: list[dict] | None = None,
+           error_code: str | None = None) -> None:
     if state not in {"completed", "needs_review"}:
         raise ValueError("Unsupported worker state")
+    # Only fixed, local diagnostic codes may cross the API boundary.
+    safe_errors={"provider_timeout","probe_failed","artifact_verification_failed",
+                 "account_profile_mismatch","worker_exception","remote_result_uncertain"}
+    code=error_code if error_code in safe_errors else "remote_result_uncertain"
     with api.db() as conn:
         updated = conn.execute(
             """UPDATE jobs SET state=?,result=?,error=?,updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND state='submitting'""",
             (state, json.dumps({"artifacts": artifacts}, ensure_ascii=False) if artifacts else None,
-             "Remote outcome uncertain; reconcile MVP ledger and provider library" if state != "completed" else None,
+             ("Remote outcome uncertain; code="+code) if state != "completed" else None,
              job_id),
         )
         if updated.rowcount != 1:
@@ -267,7 +272,7 @@ def execute(record: dict, *, runner=None) -> None:
     # The indexed account must match the persisted payload before touching OAuth.
     profile = req.get("account_profile", "default")
     if profile != record["account_profile"]:
-        finish(record["id"], "needs_review")
+        finish(record["id"], "needs_review",error_code="account_profile_mismatch")
         BLOCKED = "account_profile_mismatch"
         return
     command = [
@@ -279,6 +284,7 @@ def execute(record: dict, *, runner=None) -> None:
     ]
     if req.get("instrumental"):
         command.append("--instrumental")
+    stage="provider"
     try:
         profiles.invalidate_snapshot(profile)
         if runner is not None:
@@ -313,10 +319,15 @@ def execute(record: dict, *, runner=None) -> None:
                 raise
         if rc != 0:
             raise RuntimeError("MVP probe did not complete")
+        stage="artifact_validation"
         artifacts = verified_artifacts(request_id, profile)
-    except Exception:
+    except Exception as exc:
         # Any failure (including timeout) could follow remote acceptance.
-        finish(record["id"], "needs_review")
+        # Never publish stderr, stdout, prompts or remote error bodies.
+        code=("provider_timeout" if isinstance(exc,subprocess.TimeoutExpired)
+              else "artifact_verification_failed" if stage=="artifact_validation"
+              else "probe_failed")
+        finish(record["id"], "needs_review",error_code=code)
         # Quarantine only this account. New independent requests on another
         # authorized profile can continue; the failed request is never rerun.
         return
