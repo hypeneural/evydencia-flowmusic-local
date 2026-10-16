@@ -31,3 +31,11 @@ def lock_maintenance(path: Path):
                 yield
             finally:
                 fcntl.flock(handle,fcntl.LOCK_UN)
+
+
+def maintenance_active(path: Path) -> bool:
+    try:
+        with lock_maintenance(path):
+            return False
+    except BlockingIOError:
+        return True
