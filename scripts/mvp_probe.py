@@ -158,6 +158,20 @@ def json_command(kind: str):
 
 def account(profile: str) -> None:
     session_exists()
+    # The upstream getSession() defaults to interactive=True after a failed
+    # refresh. Account maintenance must NEVER launch OAuth browser sign-in.
+    # First invoke the upstream's supported silent refresh explicitly.
+    node = shutil.which("node")
+    noninteractive = (
+        "import { getSession } from './vendor/flowmusic-cli/src/lib/auth.mjs'; "
+        "await getSession({ interactive: false });"
+    )
+    checked = command(
+        [node, "--input-type=module", "--eval", noninteractive],
+        timeout=100
+    )
+    if checked.returncode != 0:
+        raise RuntimeError("music_session_unavailable_manual_login_required")
     model_list = json_command("models")
     credits = json_command("credits")
     public_names = [v.get("public_name", "") for v in model_list if isinstance(v, dict)] if isinstance(model_list, list) else []
