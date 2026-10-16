@@ -13,7 +13,11 @@ export FLOWMUSIC_HOME="$d"
 unset FLOWMUSIC_TOKEN FLOWMUSIC_BASE
 Xvfb :99 -screen 0 1365x850x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
 xpid=$!
-trap 'kill "$xpid" "${vpid:-0}" 2>/dev/null || true' EXIT
+cleanup() {
+  if [ -n "${vpid:-}" ]; then kill "$vpid" 2>/dev/null || true; fi
+  kill "$xpid" 2>/dev/null || true
+}
+trap cleanup EXIT
 for n in $(seq 1 40); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.25; done
 [ -S /tmp/.X11-unix/X99 ] || { echo 'P0 Xvfb failed'; exit 3; }
 pass=$(python3 -c 'import secrets,string; abc=string.ascii_letters+string.digits; print("".join(secrets.choice(abc) for _ in range(8)))')
