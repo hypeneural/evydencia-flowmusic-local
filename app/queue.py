@@ -10,9 +10,11 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 from datetime import datetime, timezone
 import subprocess
 import sys
+import signal
 import threading
 import time
 from pathlib import Path
@@ -135,6 +137,11 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
             if row["hash"] != digest:
                 raise api.HTTPException(409, "request_id already used")
             return api.result(row)
+        # Keep room for Asterisk, databases and backups on the shared host.
+        # Idempotent existing requests above bypass this NEW-job gate.
+        floor=int(os.environ.get("FLOWMUSIC_MIN_DISK_FREE_GB","0"))
+        if floor>0 and shutil.disk_usage(api.DATA).free < floor*1024**3:
+            raise api.HTTPException(507, {"code":"host_disk_reserve_breached"})
         # An existing request must remain replayable even if a session was removed.
         if not profiles.is_authenticated(profile):
             raise api.HTTPException(409, {"code":"music_session_not_connected"})
@@ -298,7 +305,8 @@ def execute(record: dict, *, runner=None) -> None:
             flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
             child = subprocess.Popen(
                 command, cwd=str(api.ROOT), stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, creationflags=flags)
+                stderr=subprocess.DEVNULL, creationflags=flags,
+                start_new_session=(os.name != "nt"))
             try:
                 rc = child.wait(timeout=1320)
             except subprocess.TimeoutExpired:
@@ -311,7 +319,10 @@ def execute(record: dict, *, runner=None) -> None:
                     except (OSError, subprocess.TimeoutExpired):
                         child.kill()
                 else:
-                    child.kill()
+                    # Stop the Python->Node child tree only, never unrelated
+                    # browser processes on the shared Asterisk host.
+                    try: os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
                 try:
                     child.wait(timeout=10)
                 except (OSError, subprocess.TimeoutExpired):
