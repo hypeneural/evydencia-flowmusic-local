@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 from datetime import datetime, timezone
 import subprocess
 import sys
@@ -136,6 +137,11 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
             if row["hash"] != digest:
                 raise api.HTTPException(409, "request_id already used")
             return api.result(row)
+        # Keep room for Asterisk, databases and backups on the shared host.
+        # Idempotent existing requests above bypass this NEW-job gate.
+        floor=int(os.environ.get("FLOWMUSIC_MIN_DISK_FREE_GB","0"))
+        if floor>0 and shutil.disk_usage(api.DATA).free < floor*1024**3:
+            raise api.HTTPException(507, {"code":"host_disk_reserve_breached"})
         # An existing request must remain replayable even if a session was removed.
         if not profiles.is_authenticated(profile):
             raise api.HTTPException(409, {"code":"music_session_not_connected"})
