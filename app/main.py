@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -246,16 +247,111 @@ def accounts_inventory(response: Response):
     """Only public session metadata, last-known credits and alias; never tokens."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    from app import profiles, queue
+    live_available = queue.enabled()
+    inventory = profiles.list_profiles()
+    with db() as connection:
+        policy = {
+            row["alias"]: dict(row) for row in connection.execute(
+                "SELECT alias,enabled,auto_select FROM account_profiles")
+        }
+        pending = {
+            row["account_profile"]:row["num"] for row in connection.execute(
+                """SELECT account_profile,COUNT(*) AS num FROM jobs
+                   WHERE run_mode='cli' AND state IN ('queued','submitting',
+                            'generating','downloading','validating','needs_review')
+                   GROUP BY account_profile""")
+        }
+    for profile in inventory:
+        options = policy.get(profile["profile"], {})
+        profile["enabled"] = bool(options.get("enabled", 1))
+        profile["auto_select"] = bool(options.get("auto_select", 0))
+        profile["blocking_jobs_count"] = pending.get(profile["profile"], 0)
+        reasons = []
+        if profile["blocking_jobs_count"]:
+            reasons.append("profile_has_pending_or_uncertain_job")
+        if not profile["enabled"]:
+            reasons.append("account_disabled")
+        if not profile["auto_select"]:
+            reasons.append("auto_selection_not_enabled")
+        if not live_available:
+            reasons.append("music_live_provider_disabled")
+        if profile["session_present"] is not True:
+            reasons.append("session_not_present")
+        # Locally unexpired token metadata and a recent provider account check
+        # are only preflight indicators, NEVER proof of generation permission.
+        if profile["session_status"] != "access_valid_locally":
+            reasons.append("session_not_locally_current")
+        if profile["stale"] or not profile["recent_account_check"]:
+            reasons.append("credit_snapshot_stale")
+        if type(profile["credits_remaining"]) is not int or profile["credits_remaining"] < 1:
+            reasons.append("insufficient_known_credits")
+        profile["eligible"] = not reasons
+        profile["eligibility_reasons"] = reasons
+        profile["eligibility_basis"] = "local_preflight_only"
+        profile["next_auth_action"] = (
+            "run_serialized_cli_account_check"
+            if profile["session_status"]=="access_expired_refreshable"
+            else "interactive_login_required"
+            if profile["session_status"] in ("not_connected","invalid_file","access_expired")
+            else "refresh_credit_snapshot_when_idle"
+            if profile["stale"] else "none")
+        profile["next_auth_action_is_non_generating"] = True
+    return {"profiles": inventory, "live_enabled": live_available,
+            "selection": "eligible_profiles_for_new_gateway_requests_only",
+            "automatic_failover": False,
+            "note": "Local eligibility is not live Google authentication or authorization; balances are cached."}
+
+
+class MusicAccountRouting(BaseModel):
+    enabled: bool = True
+    auto_select: bool = False
+
+
+@app.post("/v1/music/accounts/{alias}/routing", dependencies=[Depends(auth)])
+def configure_music_account_routing(alias: str, body: MusicAccountRouting):
+    """Local opt-in only. No OAuth, provider calls or session-file writes."""
     from app import profiles
-    return {"profiles": profiles.list_profiles(),
-            "selection": "manual_only", "automatic_failover": False,
-            "note": "Credit balances are cached observations, not live guarantees"}
+    try:
+        profiles.validate(alias)
+    except ValueError:
+        raise HTTPException(422, "invalid_music_profile") from None
+    known = {r["profile"] for r in profiles.list_profiles()}
+    if alias not in known:
+        raise HTTPException(404, "music_profile_not_registered")
+    with db() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if not body.enabled and connection.execute(
+            """SELECT 1 FROM jobs WHERE account_profile=? AND run_mode='cli'
+               AND state IN ('queued','submitting','generating','downloading','validating')
+               LIMIT 1""", (alias,)
+        ).fetchone():
+            raise HTTPException(409, "music_profile_has_active_job")
+        connection.execute("INSERT OR IGNORE INTO account_profiles(alias) VALUES(?)", (alias,))
+        connection.execute("UPDATE account_profiles SET enabled=?,auto_select=? WHERE alias=?",
+                           (int(body.enabled), int(body.auto_select), alias))
+    return {"profile": alias, "enabled": body.enabled, "auto_select": body.auto_select,
+            "affects_existing_jobs": False, "provider_login_changed": False}
 
 
 @app.get("/v1/music/queue", dependencies=[Depends(auth)])
 def queue_status():
     from app import queue
     return queue.overview()
+
+@app.get("/v1/music/jobs/by-request/{request_id}", dependencies=[Depends(auth)])
+def get_job_by_request_id(request_id: str):
+    """Read-only, indexed reconciliation for gateway timeouts; no generation."""
+    if len(request_id) < 3 or len(request_id) > 120 or re.fullmatch(r"[a-zA-Z0-9._:-]+", request_id) is None:
+        raise HTTPException(422, "Invalid request_id")
+    with db() as connection:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE request_id=? LIMIT 1", (request_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Unknown request_id")
+    return result(row)
+
 
 @app.get("/v1/music/jobs/{job_id}/events", dependencies=[Depends(auth)])
 def job_events(job_id: str):

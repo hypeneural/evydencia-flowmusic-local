@@ -15,6 +15,13 @@ OAuth como autenticação do painel**: o token é uma credencial local distinta.
 - `GET /v1/music/queue` (**requer X-Local-Token**): estado da fila existente.
 - Nada atualiza créditos ou login automaticamente: botão de recarregar só faz
   GETs locais.
+- `GET /v1/music/accounts` inclui `eligible`, `eligibility_reasons`,
+  `blocking_jobs_count`, `enabled` e `auto_select`. **Eligible é apenas
+  pré-checagem local**, exige LIVE do motor, opt-in, sessão com token
+  localmente no prazo, crédito fresco e nenhuma pendência neste perfil.
+- `POST /v1/music/accounts/{alias}/routing` requer X-Local-Token Music
+  e altera apenas a política local (`enabled`, `auto_select`) no SQLite;
+  nunca faz OAuth ou transfere conta, e não altera jobs existentes.
 
 ## Colunas
 Perfil | E-mail | Status da sessão local | Últimos créditos | Última consulta.
@@ -61,3 +68,71 @@ Referências técnicas: FastAPI `HTMLResponse`/`StaticFiles`,
 MDN `Content-Security-Policy`, fonte upstream
 `deluxebear/flowmusic-cli/src/lib/auth.mjs` (normalização de `email`,
 `expires_at` e `refresh_token`).
+
+
+## Integração multicontas com o gateway :8766
+
+A PR #3 exporta consulta indexada `GET /v1/music/jobs/by-request/{id}`.
+O gateway `:8766` obtém a lista Music com seu próprio token de integração,
+escolhe entre as contas **opted-in e pré-aptas**, grava o alias em
+`audio_dispatches` antes do POST e nunca troca de perfil se o envio
+ficar incerto. O motor musical ainda valida a sessão/provedor ao executar.
+
+Um job musical `needs_review` agora impede novos pedidos **na mesma
+conta**, sem congelar outras contas com pedidos realmente independentes.
+A geração global segue serializada; cada `request_id` preserva seu
+alias original. A desativação de uma conta com jobs ativos é recusada.
+
+Painel unificado read-only do gateway Flow: `http://127.0.0.1:8766/painel`.
+Painel Music deste serviço: `http://127.0.0.1:8765/painel-contas`.
+
+**Ordem de homologação Windows:** primeiro PR #1 Music, depois PR #3,
+em seguida PR #2 e PR #4 Flow. Backup do banco `data/jobs.db` antes de
+rodar a migração de `account_profiles(enabled,auto_select)`. Ela preserva
+`session.json`, jobs históricos e saldos, e deixa opt-in desligado.
+
+Testes dirigidos:
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_api.py tests/test_queue.py -q
+node --check app/static/accounts.js
+```
+Não declarar Music LIVE se `FLOWMUSIC_PROVIDER=mock`. Não gravar tokens
+nem credenciais no GitHub.
+
+
+## Sessões duradouras sem credenciais artificiais — 16/10/2026
+
+O upstream fixado `deluxebear/flowmusic-cli@08491dc` mantém sessão
+**Supabase** distinta para cada perfil `FLOWMUSIC_HOME`. A função
+`getSession()` usa o refresh token legítimo aproximadamente 90 s
+antes de expirar, salvando a nova dupla rotativa. O arquivo
+`session.json` NÃO é uma licença de acesso permanente: logout,
+revogação, política do servidor e timeout ainda requerem novo login.
+
+O novo comando Windows/Python tem dry-run por padrão:
+```powershell
+.\.venv\Scripts\python.exe scripts/maintain-music-sessions.py --all
+# Se seguro e autorizado, efetuar UMA consulta de modelos/créditos via CLI:
+.\.venv\Scripts\python.exe scripts/maintain-music-sessions.py --all --execute
+```
+
+Critérios: pré-checagem 15 min antes do vencimento, cooldown 30 min,
+lock de manutenção exclusiva entre processos, nenhum job ativo ou
+`needs_review` no perfil, timeout de 5 min. A fila MUSIC respeita
+esse lock antes de capturar novo job. Nenhum comando de geração é
+enviado e não há troca automática entre contas.
+
+`GET /v1/music/accounts` agora publica
+`next_auth_action=run_serialized_cli_account_check` para tokens
+localmente vencidos mas com refresh registrado. Os estados
+`reauth_required` e `cli_refresh_failed_reauth_may_be_required`
+significam login manual; não repita a renovação em loop.
+
+Se todas as contas estiverem com token válido e saldo recente,
+nenhuma chamada externa é realizada pelo script. Programar a checagem
+periodicamente no Windows Task Scheduler somente após homologação
+do procedimento e autorização explícita do operador; não copiar
+refresh tokens entre `default` e `studio02`.
+
+Fontes: https://supabase.com/docs/guides/auth/sessions e
+https://supabase.com/docs/reference/javascript/auth-refreshsession

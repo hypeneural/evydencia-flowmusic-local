@@ -22,7 +22,7 @@ flowchart TD
 - `queued`: gravado antes de qualquer solicitação remota; permanecerá no banco após reinício e poderá ser executado no modo live autorizado.
 - `submitting`: reservado atomicamente por um worker; se houver crash será convertido em `needs_review`, mesmo que o envio talvez não tenha ocorrido. Conservador para evitar duplicação.
 - `completed`: o probe concluiu, gravou ledger e todos os arquivos foram revalidados com SHA256.
-- `needs_review`: saída ambígua, erro, timeout ou interrupção; nenhuma repetição automática; fila bloqueada.
+- `needs_review`: saída ambígua, erro, timeout ou interrupção; nenhuma repetição automática. Bloqueia novos pedidos **no perfil afetado**; outros perfis podem seguir com novos pedidos independentes quando não há trava global.
 - `abandoned`: operador confirmou revisão da biblioteca e decidiu abandonar; não há reenvio.
 - `auth_required`: provider diferente de mock mas serviço live não habilitado.
 
@@ -70,7 +70,7 @@ Invoke-RestMethod 'http://127.0.0.1:8765/v1/music/jobs' -Method Post -Headers $h
 Invoke-RestMethod 'http://127.0.0.1:8765/v1/music/queue' -Headers $headers
 ```
 
-**A submissão real pode consumir créditos.** Não dispare o exemplo automaticamente. A criação em SQLite é idempotente com o mesmo `request_id` e payload; payload diferente retorna 409. A proteção não implica que a API não documentada do Google aceite uma chave idempotente. O worker chama o probe uma única vez. Se houver erro após tentativa, paralisa toda a fila; o operador deve verificar o áudio/biblioteca antes de usar `reconcile` ou remover qualquer lock órfão. Nunca apague locks durante processo ativo.
+**A submissão real pode consumir créditos.** Não dispare o exemplo automaticamente. A criação em SQLite é idempotente com o mesmo `request_id` e payload; payload diferente retorna 409. A proteção não implica que a API não documentada do Google aceite uma chave idempotente. O worker chama o probe uma única vez. Se houver erro após tentativa, isola a conta original em `needs_review`; as outras contas só podem processar pedidos novos e independentes. Travas globais como `generation.lock` ainda bloqueiam todos os workers. O operador deve verificar o áudio/biblioteca antes de usar `reconcile` ou remover qualquer lock órfão. Nunca apague locks durante processo ativo.
 
 A fila limita a 25 pendentes, usa um worker sem concorrência e faz polling local a cada ~0,75s. Não aciona chamadas automáticas para consultar créditos. As duas validações antes de ativar são: conta autenticada no Windows e termos de uso compatíveis com a forma de integração. Não usar proxies, rotação de contas ou bypass de proteções.
 
@@ -96,3 +96,80 @@ O script `start.ps1 -EnableLive` executa um preflight offline: em `needs_review`
 
 ## Cadastro de perfis em SQLite
 A migração transacional, antes de alterar o esquema, salva `jobs.db` pelo mecanismo SQLite backup em `data/backups`. Cria `account_profiles(alias, registered_at)` e `jobs.account_profile` com índice. Registros anteriores são associados a `default`, mantendo hash, ID e resultados originais. A coluna indexada é conferida contra o payload antes do envio ao provedor. Créditos permanecem em snapshots JSON locais de valor e horário para evitar fontes concorrentes.
+
+
+## Atualização P0 de multicontas — 16/10/2026
+
+A PR #3 (sobre PR #1) implementou `GET /v1/music/accounts`
+com `enabled`, `auto_select`, `eligible`, `eligibility_reasons`
+e `blocking_jobs_count`, além de
+`POST /v1/music/accounts/{alias}/routing` (autenticado) para
+habilitação explícita por conta.
+
+`eligible=true` significa apenas pré-checagem local com sessão não
+expirada, saldo recente, provider CLI LIVE e opt-in; NÃO é comprovação
+de autorização remota do Google. `provider=mock` jamais indica
+conta pronta para geração real.
+
+O worker continua único: gerações de dois perfis diferentes não são
+paralelas. Um job em `needs_review` não pode ser reenviado, nem pode
+ser remapeado para outra conta. Outro pedido realmente independente
+pode avançar em um segundo perfil válido.
+
+No Windows, timeout do probe agora tenta encerrar apenas a árvore de
+processos daquele Python/Node, preservando o banco e o job incerto.
+Nenhum log de erro bruto do Google deve sair para o navegador.
+
+Para reconciliação após timeout HTTP no gateway :8766, usar a rota
+indexada `GET /v1/music/jobs/by-request/{request_id}`; buscar apenas
+os últimos 100 jobs não é confiável.
+
+Testes adicionais precisam ser reexecutados no Windows depois de
+qualquer commit novo. Sem merge direto da PR #3 na main antes de
+homologar a PR #1. Uma conta local com saldo conhecido não é prova
+de fluxo musical de ponta a ponta em produção.
+
+
+## Homologação REAL de música no laboratório — 16/10/2026
+
+**Não usar Gemini API paga:** mantenha o `FlowMusic CLI` pinado, com
+créditos da conta FlowMusic, e `provider=cli` explicitamente ativado
+em `scripts/windows/start.ps1 -EnableLive`. Um daemon em
+`provider=mock` produz apenas JSON, não um arquivo musical real.
+
+Novo P0 de prontidão: `queue.create_live` exige snapshot de sessão
+`access_valid_locally`, leitura de crédito recente e saldo positivo
+antes de inserir um job na fila. Esses checks não garantem licença
+remota, mas impedem jobs condenados por sessão obviamente vencida.
+Em caso de 409, executar apenas `scripts/maintain-music-sessions.py
+--profile default --execute` para refrescar tokens pela CLI já existente;
+não reenviar o pedido de geração.
+
+`scripts/mvp_probe.py --mode generate` também verifica
+`getSession({interactive:false})` ANTES do ledger/lock e da
+tentativa de geração, impedindo que o worker abra login de navegador
+ao encontrar token revogado. Uma falha antes da submissão ainda será
+registrada conservadoramente como `needs_review` pelo worker: não
+repetir automaticamente.
+
+`queue.finish` permite códigos de erro controlados e não sensíveis
+(`provider_timeout`, `probe_failed`,
+`artifact_verification_failed`, `account_profile_mismatch`).
+O API result continua sem stdout/stderr secretos.
+
+O gateway Flow (porta 8766) possui consulta read-only indexada
+`GET /v1/media/audio/jobs/by-request/{id}`. O runner
+`scripts/windows/run-live-audio-once.ps1` do repositório Flow
+submete um único POST real, acompanha GET, verifica SHA-256 e FFprobe
+no WAV original do Music, imprime caminho local e salva relatório.
+A primeira execução requer `-ApproveLive`; `RunKey` repetido
+nunca reenvia um segundo POST.
+
+Operação atual: nenhum teto estimado de créditos por pedido no Music,
+portanto o laboratório deve verificar saldo antes e depois do único
+canário de 60 segundos. A realização do canário ainda depende do
+Antigravity local em Windows 11 e sessões legítimas, não foi feita
+neste acesso GitHub.
+
+Runbook completo (Flow):
+`docs/REAL_FLOW_AND_MUSIC_CANARY_20261016.md`.

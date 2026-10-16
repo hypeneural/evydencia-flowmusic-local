@@ -71,6 +71,13 @@ def migrate() -> None:
             alias TEXT PRIMARY KEY,
             registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Existing Windows installations retain all aliases and OAuth files.
+        # Automatic routing requires explicit profile-level opt-in.
+        policy_columns={row[1] for row in conn.execute("PRAGMA table_info(account_profiles)")}
+        if "enabled" not in policy_columns:
+            conn.execute("ALTER TABLE account_profiles ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+        if "auto_select" not in policy_columns:
+            conn.execute("ALTER TABLE account_profiles ADD COLUMN auto_select INTEGER NOT NULL DEFAULT 0")
         # Backfill only the indexed account alias, retaining all existing
         # hashes, timestamps, results, ledger files and job states.
         for row in (list(conn.execute("SELECT id,payload,account_profile FROM jobs")) if needs_backfill else []):
@@ -130,7 +137,25 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
             return api.result(row)
         # An existing request must remain replayable even if a session was removed.
         if not profiles.is_authenticated(profile):
-            raise api.HTTPException(409, "Selected account has no local session; log in manually first")
+            raise api.HTTPException(409, {"code":"music_session_not_connected"})
+        # A session.json file alone is not provider readiness. Reject before
+        # creating a paid job if the last legitimate account check is stale.
+        # Re-run the existing non-generating CLI account check, never the
+        # generation request, to refresh rotating tokens and credit evidence.
+        session = profiles.session_public_metadata(profile)
+        balance = profiles.credit_snapshot(profile)
+        if session["session_status"] != "access_valid_locally":
+            raise api.HTTPException(409, {"code":"music_session_preflight_required",
+                                          "action":"run_cli_account_check_once"})
+        if balance["stale"] or type(balance["credits_remaining"]) is not int or balance["credits_remaining"] < 1:
+            raise api.HTTPException(409, {"code":"music_credit_preflight_required",
+                                          "action":"run_cli_account_check_once"})
+        policy = conn.execute("SELECT enabled FROM account_profiles WHERE alias=?", (profile,)).fetchone()
+        if policy and not policy["enabled"]:
+            raise api.HTTPException(409, "Selected music account is disabled")
+        if conn.execute("""SELECT 1 FROM jobs WHERE account_profile=? AND run_mode='cli'
+                           AND state='needs_review' LIMIT 1""", (profile,)).fetchone():
+            raise api.HTTPException(409, "Selected music account has an unresolved job")
         pending = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE run_mode='cli' AND state IN ('queued','submitting','generating')"
         ).fetchone()[0]
@@ -149,36 +174,61 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
 
 
 def claim() -> dict | None:
-    """BEGIN IMMEDIATE provides single-consumer claim even with distinct processes."""
-    with api.db() as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        # Cross-process single-flight: never claim while another job is submitting.
-        if conn.execute("SELECT 1 FROM jobs WHERE run_mode='cli' AND state='submitting' LIMIT 1").fetchone():
-            return None
-        row = conn.execute(
-            """SELECT * FROM jobs WHERE state='queued' AND run_mode='cli'
-               AND approved_live=1 ORDER BY created_at, rowid LIMIT 1"""
-        ).fetchone()
-        if row is None:
-            return None
-        conn.execute(
-            """UPDATE jobs SET state='submitting',attempt_count=attempt_count+1,
-               updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='queued'""",
-            (row["id"],),
-        )
-        event(conn, row["id"], "job.claimed", "submitting")
-        return dict(row)
+    """Claim atomically while holding the rotating-session maintenance lock.
+
+    Maintenance also holds this lock and checks for CLI jobs before refreshing
+    a token. The combination prevents a time-of-check/time-of-use race where
+    generation starts just after a maintenance preflight.
+    """
+    from app.session_maintenance_lock import lock_maintenance
+    path=api.DATA / "session-maintenance" / "music-session-maintenance.lock"
+    try:
+        with lock_maintenance(path):
+            with api.db() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if conn.execute("""SELECT 1 FROM jobs
+                      WHERE run_mode='cli' AND state='submitting' LIMIT 1""").fetchone():
+                    return None
+                row=conn.execute(
+                    """SELECT j.* FROM jobs j
+                       LEFT JOIN account_profiles a ON a.alias=j.account_profile
+                       WHERE j.state='queued' AND j.run_mode='cli'
+                       AND j.approved_live=1 AND COALESCE(a.enabled,1)=1
+                       AND NOT EXISTS (SELECT 1 FROM jobs old
+                          WHERE old.run_mode='cli'
+                            AND old.account_profile=j.account_profile
+                            AND old.state='needs_review')
+                       ORDER BY j.created_at,j.rowid LIMIT 1"""
+                ).fetchone()
+                if row is None:
+                    return None
+                result=conn.execute(
+                    """UPDATE jobs SET state='submitting',
+                         attempt_count=attempt_count+1,
+                         updated_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND state='queued'""",(row["id"],))
+                if result.rowcount!=1:
+                    return None
+                event(conn,row["id"],"job.claimed","submitting")
+                return dict(row)
+    except BlockingIOError:
+        return None
 
 
-def finish(job_id: str, state: str, artifacts: list[dict] | None = None) -> None:
+def finish(job_id: str, state: str, artifacts: list[dict] | None = None,
+           error_code: str | None = None) -> None:
     if state not in {"completed", "needs_review"}:
         raise ValueError("Unsupported worker state")
+    # Only fixed, local diagnostic codes may cross the API boundary.
+    safe_errors={"provider_timeout","probe_failed","artifact_verification_failed",
+                 "account_profile_mismatch","worker_exception","remote_result_uncertain"}
+    code=error_code if error_code in safe_errors else "remote_result_uncertain"
     with api.db() as conn:
         updated = conn.execute(
             """UPDATE jobs SET state=?,result=?,error=?,updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND state='submitting'""",
             (state, json.dumps({"artifacts": artifacts}, ensure_ascii=False) if artifacts else None,
-             "Remote outcome uncertain; reconcile MVP ledger and provider library" if state != "completed" else None,
+             ("Remote outcome uncertain; code="+code) if state != "completed" else None,
              job_id),
         )
         if updated.rowcount != 1:
@@ -222,7 +272,7 @@ def execute(record: dict, *, runner=None) -> None:
     # The indexed account must match the persisted payload before touching OAuth.
     profile = req.get("account_profile", "default")
     if profile != record["account_profile"]:
-        finish(record["id"], "needs_review")
+        finish(record["id"], "needs_review",error_code="account_profile_mismatch")
         BLOCKED = "account_profile_mismatch"
         return
     command = [
@@ -234,18 +284,52 @@ def execute(record: dict, *, runner=None) -> None:
     ]
     if req.get("instrumental"):
         command.append("--instrumental")
-    process = runner if runner is not None else subprocess.run
+    stage="provider"
     try:
         profiles.invalidate_snapshot(profile)
-        done = process(command, cwd=str(api.ROOT), capture_output=True,
-                       text=True, timeout=1320, check=False)
-        if done.returncode != 0:
+        if runner is not None:
+            # Existing tests inject a runner; no provider process is spawned.
+            done = runner(command, cwd=str(api.ROOT), capture_output=True,
+                          text=True, timeout=1320, check=False)
+            rc = done.returncode
+        else:
+            # subprocess.run(timeout=) can leave Node/Chrome grandchildren on
+            # Windows. Own only this probe's process tree, not user Chrome.
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            child = subprocess.Popen(
+                command, cwd=str(api.ROOT), stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, creationflags=flags)
+            try:
+                rc = child.wait(timeout=1320)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=10, check=False)
+                    except (OSError, subprocess.TimeoutExpired):
+                        child.kill()
+                else:
+                    child.kill()
+                try:
+                    child.wait(timeout=10)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                raise
+        if rc != 0:
             raise RuntimeError("MVP probe did not complete")
+        stage="artifact_validation"
         artifacts = verified_artifacts(request_id, profile)
-    except Exception:
+    except Exception as exc:
         # Any failure (including timeout) could follow remote acceptance.
-        finish(record["id"], "needs_review")
-        BLOCKED = "needs_review"
+        # Never publish stderr, stdout, prompts or remote error bodies.
+        code=("provider_timeout" if isinstance(exc,subprocess.TimeoutExpired)
+              else "artifact_verification_failed" if stage=="artifact_validation"
+              else "probe_failed")
+        finish(record["id"], "needs_review",error_code=code)
+        # Quarantine only this account. New independent requests on another
+        # authorized profile can continue; the failed request is never rerun.
         return
     finish(record["id"], "completed", artifacts)
 
@@ -258,12 +342,8 @@ def run_once(*, runner=None) -> bool:
     if (api.DATA / "mvp" / "generation.lock").exists():
         BLOCKED = "existing_generation_lock"
         return False
-    with api.db() as conn:
-        if conn.execute(
-            "SELECT 1 FROM jobs WHERE run_mode='cli' AND state='needs_review' LIMIT 1"
-        ).fetchone():
-            BLOCKED = "unresolved_job"
-            return False
+    # An unresolved outcome blocks its OWN profile, not other independent
+    # profiles. A global provider lock/worker I/O failure still blocks all.
     record = claim()
     if not record:
         return False

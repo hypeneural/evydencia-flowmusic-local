@@ -35,7 +35,7 @@
   const STATE = {
     "not_connected": ["Não conectada", "bad"],
     "invalid_file": ["Sessão inválida", "bad"],
-    "access_valid_locally": ["Token local válido", "ok"],
+    "access_valid_locally": ["Token no prazo (local)", "ok"],
     "access_expired_refreshable": ["Pode renovar", "warn"],
     "access_expired": ["Token expirado", "bad"],
     "metadata_incomplete": ["Verificar sessão", "warn"]
@@ -51,6 +51,22 @@
       cell.appendChild(el("div", "muted", "Saldo verificado recentemente"));
     }
     tr.appendChild(cell);
+    const routing = document.createElement("td");
+    routing.appendChild(el("span", "pill " + (profile.eligible === true ? "ok" : "warn"),
+      profile.eligible === true ? "Pré-apta" : (profile.enabled === false ? "Desabilitada" : "Indisponível")));
+    const explanations = Array.isArray(profile.eligibility_reasons) ? profile.eligibility_reasons : [];
+    if (explanations.length) routing.appendChild(
+      el("div", "muted", explanations.map(x => ({
+        music_live_provider_disabled:"Motor LIVE desligado",
+        session_not_present:"Sem sessão salva",
+        session_not_locally_current:"Token sem validade local comprovada",
+        credit_snapshot_stale:"Saldo antigo",
+        insufficient_known_credits:"Sem saldo suficiente",
+        account_disabled:"Conta desabilitada",
+        auto_selection_not_enabled:"Seleção automática desligada",
+        profile_has_pending_or_uncertain_job:"Job pendente ou incerto nesta conta"
+      }[x] || x)).join(" · ")));
+    tr.appendChild(routing);
     const credits = document.createElement("td");
     credits.className = "number";
     credits.appendChild(el("div", "credits",
@@ -69,7 +85,7 @@
     if (!items.length) {
       const tr = el("tr");
       const td = el("td", "", "Nenhum perfil encontrado.");
-      td.colSpan = 5; tr.appendChild(td); tbody.appendChild(tr);
+      td.colSpan = 6; tr.appendChild(td); tbody.appendChild(tr);
     }
     byId("count-profiles").textContent = fmt(items.length);
     byId("count-sessions").textContent = fmt(items.filter(p => p.session_present).length);
@@ -82,6 +98,9 @@
     byId("queue-detail").textContent = reviewing
       ? reviewing + " tarefa(s) precisam de revisão"
       : pending + " tarefa(s) aguardando";
+    byId("music-live-state").textContent = list.live_enabled
+      ? "Motor LIVE habilitado. Elegibilidade mostrada é apenas pré-checagem local."
+      : "Motor de geração LIVE desligado: nenhuma conta pode ser enviada à fila real.";
     byId("last-update").textContent = "Painel atualizado: " + date(new Date().toISOString());
     byId("metrics").hidden = false;
     byId("account-panel").hidden = false;

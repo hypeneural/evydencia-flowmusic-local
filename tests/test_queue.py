@@ -24,7 +24,11 @@ def environment(tmp_path, monkeypatch):
     # Isolated fixture only: never read or write real OAuth credentials in tests.
     session = tmp_path / "flowmusic-session"
     session.mkdir()
-    (session / "session.json").write_text("{}", encoding="utf-8")
+    (session / "session.json").write_text(json.dumps({
+        "expires_at": __import__("time").time()+3600,
+        "refresh_token":"fixture-only-invalid-refresh-never-sent",
+        "email":"fixture@example.invalid"}), encoding="utf-8")
+    profiles.save_snapshot("default",100)
     monkeypatch.setenv("FLOWMUSIC_PROVIDER", "mock")
     monkeypatch.delenv("FLOWMUSIC_ALLOW_LIVE", raising=False)
     monkeypatch.setattr(queue, "BLOCKED", None)
@@ -196,7 +200,9 @@ def test_profile_explicit_and_existing_job_replay_without_session(environment):
     client, headers = environment
     profile = profiles.session_dir("studio03")
     profile.mkdir(parents=True)
-    (profile / "session.json").write_text("{}", encoding="utf-8")
+    (profile / "session.json").write_text(json.dumps({
+        "expires_at":__import__("time").time()+3600}), encoding="utf-8")
+    profiles.save_snapshot("studio03",100)
     payload = {**request(), "account_profile": "studio03"}
     posted = client.post("/v1/music/jobs", headers=headers, json=payload)
     assert posted.status_code == 202
@@ -206,3 +212,146 @@ def test_profile_explicit_and_existing_job_replay_without_session(environment):
     blocked = client.post("/v1/music/jobs", headers=headers,
                           json={**request(), "account_profile": "studio03"})
     assert blocked.status_code == 409
+
+
+def test_music_account_eligibility_contract(environment):
+    """The gateway must receive eligible=true only for live local preflight."""
+    from datetime import datetime, timezone, timedelta
+    client, headers = environment
+    session = profiles.session_dir("default") / "session.json"
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+    session.write_text(json.dumps({"email": "test@example.invalid",
+                                   "expires_at": expires}), encoding="utf-8")
+    profiles.save_snapshot("default", 97)
+    optin = client.post("/v1/music/accounts/default/routing", headers=headers,
+                        json={"enabled": True, "auto_select": True})
+    assert optin.status_code == 200
+    result = client.get("/v1/music/accounts", headers=headers)
+    assert result.status_code == 200
+    row = next(p for p in result.json()["profiles"] if p["profile"] == "default")
+    assert row["eligible"] is True
+    assert row["eligibility_basis"] == "local_preflight_only"
+    assert row["credits_remaining"] == 97
+
+    # Provider mock must NEVER make a profile selectable as a real live account.
+    from app import queue
+    old_mode = api.get_provider()
+    try:
+        import os
+        os.environ["FLOWMUSIC_PROVIDER"] = "mock"
+        blocked = client.get("/v1/music/accounts", headers=headers).json()
+        p = next(x for x in blocked["profiles"] if x["profile"] == "default")
+        assert p["eligible"] is False
+        assert "music_live_provider_disabled" in p["eligibility_reasons"]
+    finally:
+        os.environ["FLOWMUSIC_PROVIDER"] = old_mode
+
+
+def test_music_session_presence_does_not_prove_eligible(environment):
+    client, headers = environment
+    (profiles.session_dir("default")/"session.json").write_text("{}", encoding="utf-8")
+    profiles.save_snapshot("default", 900)
+    result = client.get("/v1/music/accounts", headers=headers).json()
+    p = next(x for x in result["profiles"] if x["profile"] == "default")
+    assert p["session_present"] is True
+    assert p["eligible"] is False
+    assert "session_not_locally_current" in p["eligibility_reasons"]
+
+
+def test_uncertain_music_job_only_blocks_own_profile(environment):
+    client, headers = environment
+    studio=profiles.session_dir("studio02")
+    studio.mkdir(parents=True)
+    (studio/"session.json").write_text(json.dumps({
+        "expires_at":__import__("time").time()+3600}), encoding="utf-8")
+    profiles.save_snapshot("studio02",100)
+    first={**request(), "account_profile":"default"}
+    second={**request(), "account_profile":"studio02"}
+    jid1=client.post("/v1/music/jobs",headers=headers,json=first).json()["job_id"]
+    jid2=client.post("/v1/music/jobs",headers=headers,json=second).json()["job_id"]
+    a=queue.claim()
+    assert a["id"]==jid1
+    queue.finish(jid1,"needs_review")
+    b=queue.claim()
+    assert b is not None and b["id"]==jid2
+    queue.finish(jid2,"completed",[{"path":"fixture","sha256":"fixture"}])
+    assert client.get(f"/v1/music/jobs/{jid1}",headers=headers).json()["status"]=="needs_review"
+    assert client.get(f"/v1/music/jobs/{jid2}",headers=headers).json()["status"]=="completed"
+    blocked={**request(),"account_profile":"default"}
+    assert client.post("/v1/music/jobs",headers=headers,json=blocked).status_code==409
+
+
+def test_music_opt_in_policy_does_not_change_existing_jobs(environment):
+    client,headers=environment
+    from datetime import datetime,timezone,timedelta
+    p=profiles.session_dir("default")/"session.json"
+    p.write_text(json.dumps({"expires_at":(datetime.now(timezone.utc)+timedelta(hours=1)).timestamp()}),
+                 encoding="utf-8")
+    profiles.save_snapshot("default",123)
+    before=client.get("/v1/music/accounts",headers=headers).json()["profiles"]
+    existing=next(x for x in before if x["profile"]=="default")
+    assert existing["eligible"] is False
+    assert "auto_selection_not_enabled" in existing["eligibility_reasons"]
+    changed=client.post("/v1/music/accounts/default/routing",headers=headers,
+                        json={"enabled":True,"auto_select":True})
+    assert changed.status_code==200
+    assert changed.json()["affects_existing_jobs"] is False
+    after=client.get("/v1/music/accounts",headers=headers).json()["profiles"]
+    current=next(x for x in after if x["profile"]=="default")
+    assert current["eligible"] is True
+    denied=client.post("/v1/music/accounts/default/routing",json={"enabled":False,"auto_select":False})
+    assert denied.status_code==401
+
+
+def test_session_maintenance_lock_blocks_claim_without_state_change(environment):
+    from app.session_maintenance_lock import lock_maintenance
+    client, h = environment
+    item=request()
+    jid=client.post("/v1/music/jobs",headers=h,json=item).json()["job_id"]
+    path=api.DATA/"session-maintenance"/"music-session-maintenance.lock"
+    with lock_maintenance(path):
+        assert queue.claim() is None
+        assert client.get(f"/v1/music/jobs/{jid}",headers=h).json()["status"]=="queued"
+    claimed=queue.claim()
+    assert claimed is not None and claimed["id"]==jid
+    queue.finish(jid,"needs_review")
+
+def test_live_queue_rejects_stale_session_before_creating_paid_job(environment):
+    client,h=environment
+    from app import profiles
+    original=profiles.session_dir("default")/"session.json"
+    original.write_text(json.dumps({"expires_at":1,"refresh_token":"fixture"}),
+                        encoding="utf-8")
+    request_id=request()["request_id"]
+    response=client.post("/v1/music/jobs",headers=h,
+                         json={**request(),"request_id":request_id})
+    assert response.status_code==409
+    assert response.json()["detail"]["code"]=="music_session_preflight_required"
+    with api.db() as connection:
+        assert connection.execute("SELECT 1 FROM jobs WHERE request_id=?",(request_id,)).fetchone() is None
+
+
+def test_live_queue_rejects_stale_credits_before_creating_paid_job(environment):
+    client,h=environment
+    from app import profiles
+    profiles.invalidate_snapshot("default")
+    request_id=request()["request_id"]
+    response=client.post("/v1/music/jobs",headers=h,
+                         json={**request(),"request_id":request_id})
+    assert response.status_code==409
+    assert response.json()["detail"]["code"]=="music_credit_preflight_required"
+    with api.db() as connection:
+        assert connection.execute("SELECT 1 FROM jobs WHERE request_id=?",(request_id,)).fetchone() is None
+
+
+
+def test_live_probe_failure_has_only_allowlisted_error_code(environment):
+    client, h = environment
+    item=request()
+    job_id=client.post("/v1/music/jobs",headers=h,json=item).json()["job_id"]
+    from types import SimpleNamespace
+    assert queue.run_once(runner=lambda *_a,**_k: SimpleNamespace(returncode=7))
+    result=client.get(f"/v1/music/jobs/{job_id}",headers=h).json()
+    assert result["status"]=="needs_review"
+    assert result["error"]=="Remote outcome uncertain; code=probe_failed"
+    assert "password" not in result["error"].lower()
