@@ -115,7 +115,7 @@ def _probe_once(alias: str) -> bool:
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
                            creationflags=flags)
     try:
-        return child.wait(timeout=180)==0
+        return child.wait(timeout=300)==0
     except subprocess.TimeoutExpired:
         if os.name=="nt":
             try:
