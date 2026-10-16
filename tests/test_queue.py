@@ -343,3 +343,15 @@ def test_live_queue_rejects_stale_credits_before_creating_paid_job(environment):
     with api.db() as connection:
         assert connection.execute("SELECT 1 FROM jobs WHERE request_id=?",(request_id,)).fetchone() is None
 
+
+
+def test_live_probe_failure_has_only_allowlisted_error_code(environment):
+    client, h = environment
+    item=request()
+    job_id=client.post("/v1/music/jobs",headers=h,json=item).json()["job_id"]
+    from types import SimpleNamespace
+    assert queue.run_once(runner=lambda *_a,**_k: SimpleNamespace(returncode=7))
+    result=client.get(f"/v1/music/jobs/{job_id}",headers=h).json()
+    assert result["status"]=="needs_review"
+    assert result["error"]=="Remote outcome uncertain; code=probe_failed"
+    assert "password" not in result["error"].lower()
