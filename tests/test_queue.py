@@ -24,7 +24,11 @@ def environment(tmp_path, monkeypatch):
     # Isolated fixture only: never read or write real OAuth credentials in tests.
     session = tmp_path / "flowmusic-session"
     session.mkdir()
-    (session / "session.json").write_text("{}", encoding="utf-8")
+    (session / "session.json").write_text(json.dumps({
+        "expires_at": __import__("time").time()+3600,
+        "refresh_token":"fixture-only-invalid-refresh-never-sent",
+        "email":"fixture@example.invalid"}), encoding="utf-8")
+    profiles.save_snapshot("default",100)
     monkeypatch.setenv("FLOWMUSIC_PROVIDER", "mock")
     monkeypatch.delenv("FLOWMUSIC_ALLOW_LIVE", raising=False)
     monkeypatch.setattr(queue, "BLOCKED", None)
@@ -306,3 +310,31 @@ def test_session_maintenance_lock_blocks_claim_without_state_change(environment)
     claimed=queue.claim()
     assert claimed is not None and claimed["id"]==jid
     queue.finish(jid,"needs_review")
+
+def test_live_queue_rejects_stale_session_before_creating_paid_job(environment):
+    client,h=environment
+    from app import profiles
+    original=profiles.session_dir("default")/"session.json"
+    original.write_text(json.dumps({"expires_at":1,"refresh_token":"fixture"}),
+                        encoding="utf-8")
+    request_id=request()["request_id"]
+    response=client.post("/v1/music/jobs",headers=h,
+                         json={**request(),"request_id":request_id})
+    assert response.status_code==409
+    assert response.json()["detail"]["code"]=="music_session_preflight_required"
+    with api.db() as connection:
+        assert connection.execute("SELECT 1 FROM jobs WHERE request_id=?",(request_id,)).fetchone() is None
+
+
+def test_live_queue_rejects_stale_credits_before_creating_paid_job(environment):
+    client,h=environment
+    from app import profiles
+    profiles.invalidate_snapshot("default")
+    request_id=request()["request_id"]
+    response=client.post("/v1/music/jobs",headers=h,
+                         json={**request(),"request_id":request_id})
+    assert response.status_code==409
+    assert response.json()["detail"]["code"]=="music_credit_preflight_required"
+    with api.db() as connection:
+        assert connection.execute("SELECT 1 FROM jobs WHERE request_id=?",(request_id,)).fetchone() is None
+
