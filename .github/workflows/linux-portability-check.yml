@@ -1,0 +1,14 @@
+name: music-linux-syntax
+on:
+  pull_request:
+    paths: ['app/**','scripts/mvp_probe.py','infra/docker/**','.dockerignore','.github/workflows/linux-portability-check.yml']
+  push:
+    branches: ['feat/contabo-linux-music-20261016']
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - run: python -m compileall -q app scripts
