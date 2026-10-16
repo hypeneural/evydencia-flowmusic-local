@@ -137,7 +137,19 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
             return api.result(row)
         # An existing request must remain replayable even if a session was removed.
         if not profiles.is_authenticated(profile):
-            raise api.HTTPException(409, "Selected account has no local session; log in manually first")
+            raise api.HTTPException(409, {"code":"music_session_not_connected"})
+        # A session.json file alone is not provider readiness. Reject before
+        # creating a paid job if the last legitimate account check is stale.
+        # Re-run the existing non-generating CLI account check, never the
+        # generation request, to refresh rotating tokens and credit evidence.
+        session = profiles.session_public_metadata(profile)
+        balance = profiles.credit_snapshot(profile)
+        if session["session_status"] != "access_valid_locally":
+            raise api.HTTPException(409, {"code":"music_session_preflight_required",
+                                          "action":"run_cli_account_check_once"})
+        if balance["stale"] or type(balance["credits_remaining"]) is not int or balance["credits_remaining"] < 1:
+            raise api.HTTPException(409, {"code":"music_credit_preflight_required",
+                                          "action":"run_cli_account_check_once"})
         policy = conn.execute("SELECT enabled FROM account_profiles WHERE alias=?", (profile,)).fetchone()
         if policy and not policy["enabled"]:
             raise api.HTTPException(409, "Selected music account is disabled")
