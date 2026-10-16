@@ -98,3 +98,41 @@ node --check app/static/accounts.js
 ```
 Não declarar Music LIVE se `FLOWMUSIC_PROVIDER=mock`. Não gravar tokens
 nem credenciais no GitHub.
+
+
+## Sessões duradouras sem credenciais artificiais — 16/10/2026
+
+O upstream fixado `deluxebear/flowmusic-cli@08491dc` mantém sessão
+**Supabase** distinta para cada perfil `FLOWMUSIC_HOME`. A função
+`getSession()` usa o refresh token legítimo aproximadamente 90 s
+antes de expirar, salvando a nova dupla rotativa. O arquivo
+`session.json` NÃO é uma licença de acesso permanente: logout,
+revogação, política do servidor e timeout ainda requerem novo login.
+
+O novo comando Windows/Python tem dry-run por padrão:
+```powershell
+.\.venv\Scripts\python.exe scripts/maintain-music-sessions.py --all
+# Se seguro e autorizado, efetuar UMA consulta de modelos/créditos via CLI:
+.\.venv\Scripts\python.exe scripts/maintain-music-sessions.py --all --execute
+```
+
+Critérios: pré-checagem 15 min antes do vencimento, cooldown 30 min,
+lock de manutenção exclusiva entre processos, nenhum job ativo ou
+`needs_review` no perfil, timeout de 5 min. A fila MUSIC respeita
+esse lock antes de capturar novo job. Nenhum comando de geração é
+enviado e não há troca automática entre contas.
+
+`GET /v1/music/accounts` agora publica
+`next_auth_action=run_serialized_cli_account_check` para tokens
+localmente vencidos mas com refresh registrado. Os estados
+`reauth_required` e `cli_refresh_failed_reauth_may_be_required`
+significam login manual; não repita a renovação em loop.
+
+Se todas as contas estiverem com token válido e saldo recente,
+nenhuma chamada externa é realizada pelo script. Programar a checagem
+periodicamente no Windows Task Scheduler somente após homologação
+do procedimento e autorização explícita do operador; não copiar
+refresh tokens entre `default` e `studio02`.
+
+Fontes: https://supabase.com/docs/guides/auth/sessions e
+https://supabase.com/docs/reference/javascript/auth-refreshsession
