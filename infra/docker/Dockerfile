@@ -17,6 +17,22 @@ COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt
 RUN mkdir -p vendor && git clone --no-checkout https://github.com/deluxebear/flowmusic-cli.git vendor/flowmusic-cli \
     && git -C vendor/flowmusic-cli checkout --detach 08491dc3319ae9f530c5c05c431196bbbbb10607
+# Build-time hardening: upstream's non-idempotent create POST must NEVER be
+# retried on ambiguous timeout or 429. The runtime filesystem is read-only.
+RUN python - <<'PY'
+from pathlib import Path
+p=Path("/app/vendor/flowmusic-cli/src/lib/client.mjs")
+body=p.read_text()
+old="if (!idempotent && attempt >= 1) break;"
+new="if (!idempotent) break;"
+old2="const retryable = r.status === 429 || (idempotent && r.status >= 500);"
+new2="const retryable = idempotent && (r.status === 429 || r.status >= 500);"
+if old not in body or old2 not in body:
+    raise SystemExit("Unknown pinned upstream retry semantics; STOP image build")
+body=body.replace(old,new,1).replace(old2,new2,1)
+p.write_text(body)
+assert new in p.read_text() and new2 in p.read_text()
+PY
 COPY . .
 RUN groupadd --gid 1001 music && useradd -m --uid 1001 --gid 1001 music \
     && mkdir -p /app/data && chown 1001:1001 /app/data
