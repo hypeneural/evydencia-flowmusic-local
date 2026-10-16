@@ -162,36 +162,45 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
 
 
 def claim() -> dict | None:
-    """BEGIN IMMEDIATE provides single-consumer claim even with distinct processes."""
-    from app.session_maintenance_lock import maintenance_active
-    if maintenance_active(api.DATA / "session-maintenance" / "music-session-maintenance.lock"):
-        # Avoid racing a rotating refresh token while another process runs a
-        # provider account check. A queued job remains queued without POST.
+    """Claim atomically while holding the rotating-session maintenance lock.
+
+    Maintenance also holds this lock and checks for CLI jobs before refreshing
+    a token. The combination prevents a time-of-check/time-of-use race where
+    generation starts just after a maintenance preflight.
+    """
+    from app.session_maintenance_lock import lock_maintenance
+    path=api.DATA / "session-maintenance" / "music-session-maintenance.lock"
+    try:
+        with lock_maintenance(path):
+            with api.db() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if conn.execute("""SELECT 1 FROM jobs
+                      WHERE run_mode='cli' AND state='submitting' LIMIT 1""").fetchone():
+                    return None
+                row=conn.execute(
+                    """SELECT j.* FROM jobs j
+                       LEFT JOIN account_profiles a ON a.alias=j.account_profile
+                       WHERE j.state='queued' AND j.run_mode='cli'
+                       AND j.approved_live=1 AND COALESCE(a.enabled,1)=1
+                       AND NOT EXISTS (SELECT 1 FROM jobs old
+                          WHERE old.run_mode='cli'
+                            AND old.account_profile=j.account_profile
+                            AND old.state='needs_review')
+                       ORDER BY j.created_at,j.rowid LIMIT 1"""
+                ).fetchone()
+                if row is None:
+                    return None
+                result=conn.execute(
+                    """UPDATE jobs SET state='submitting',
+                         attempt_count=attempt_count+1,
+                         updated_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND state='queued'""",(row["id"],))
+                if result.rowcount!=1:
+                    return None
+                event(conn,row["id"],"job.claimed","submitting")
+                return dict(row)
+    except BlockingIOError:
         return None
-    with api.db() as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        # Cross-process single-flight: never claim while another job is submitting.
-        if conn.execute("SELECT 1 FROM jobs WHERE run_mode='cli' AND state='submitting' LIMIT 1").fetchone():
-            return None
-        row = conn.execute(
-            """SELECT j.* FROM jobs j
-               LEFT JOIN account_profiles a ON a.alias=j.account_profile
-               WHERE j.state='queued' AND j.run_mode='cli'
-               AND j.approved_live=1 AND COALESCE(a.enabled,1)=1
-               AND NOT EXISTS (SELECT 1 FROM jobs old
-                   WHERE old.run_mode='cli' AND old.account_profile=j.account_profile
-                     AND old.state='needs_review')
-               ORDER BY j.created_at, j.rowid LIMIT 1"""
-        ).fetchone()
-        if row is None:
-            return None
-        conn.execute(
-            """UPDATE jobs SET state='submitting',attempt_count=attempt_count+1,
-               updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='queued'""",
-            (row["id"],),
-        )
-        event(conn, row["id"], "job.claimed", "submitting")
-        return dict(row)
 
 
 def finish(job_id: str, state: str, artifacts: list[dict] | None = None) -> None:
