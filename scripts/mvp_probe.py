@@ -67,10 +67,33 @@ def command(parts: list[str], *, timeout: int = 120, interactive: bool = False):
     env.pop("FLOWMUSIC_TOKEN", None)
     env.pop("FLOWMUSIC_BASE", None)
     env["FLOWMUSIC_HOME"] = str(SESSION)
-    kwargs = {"cwd": ROOT, "env": env, "timeout": timeout, "check": False}
-    if not interactive:
-        kwargs.update(capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return subprocess.run(parts, **kwargs)
+    if interactive:
+        # Only an explicitly authorized operator session is allowed here.
+        return subprocess.run(parts, cwd=ROOT, env=env, timeout=timeout, check=False)
+    # Provider CLI can launch Chromium descendants. Under Linux start a
+    # separate process group and terminate the whole tree on timeout.
+    import signal
+    child = subprocess.Popen(
+        parts, cwd=ROOT, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+        start_new_session=(os.name != "nt"))
+    try:
+        out, err = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            try:
+                subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                               capture_output=True, timeout=10, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                child.kill()
+        else:
+            try: os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+        out, err = child.communicate()
+        raise
+    return subprocess.CompletedProcess(parts, child.returncode, out, err)
 
 
 def check_pin() -> None:
