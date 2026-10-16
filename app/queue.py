@@ -163,6 +163,11 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
 
 def claim() -> dict | None:
     """BEGIN IMMEDIATE provides single-consumer claim even with distinct processes."""
+    from app.session_maintenance_lock import maintenance_active
+    if maintenance_active(api.DATA / "session-maintenance" / "music-session-maintenance.lock"):
+        # Avoid racing a rotating refresh token while another process runs a
+        # provider account check. A queued job remains queued without POST.
+        return None
     with api.db() as conn:
         conn.execute("BEGIN IMMEDIATE")
         # Cross-process single-flight: never claim while another job is submitting.
