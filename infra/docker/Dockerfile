@@ -3,7 +3,7 @@ FROM node:22.14.0-bookworm-slim AS node
 FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg git ffmpeg tini \
+    ca-certificates curl gnupg git ffmpeg tini xvfb x11vnc xfonts-base \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
     && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list \
