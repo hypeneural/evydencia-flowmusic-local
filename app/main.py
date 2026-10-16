@@ -289,6 +289,14 @@ def accounts_inventory(response: Response):
         profile["eligible"] = not reasons
         profile["eligibility_reasons"] = reasons
         profile["eligibility_basis"] = "local_preflight_only"
+        profile["next_auth_action"] = (
+            "run_serialized_cli_account_check"
+            if profile["session_status"]=="access_expired_refreshable"
+            else "interactive_login_required"
+            if profile["session_status"] in ("not_connected","invalid_file","access_expired")
+            else "refresh_credit_snapshot_when_idle"
+            if profile["stale"] else "none")
+        profile["next_auth_action_is_non_generating"] = True
     return {"profiles": inventory, "live_enabled": live_available,
             "selection": "eligible_profiles_for_new_gateway_requests_only",
             "automatic_failover": False,
