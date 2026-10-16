@@ -200,7 +200,9 @@ def test_profile_explicit_and_existing_job_replay_without_session(environment):
     client, headers = environment
     profile = profiles.session_dir("studio03")
     profile.mkdir(parents=True)
-    (profile / "session.json").write_text("{}", encoding="utf-8")
+    (profile / "session.json").write_text(json.dumps({
+        "expires_at":__import__("time").time()+3600}), encoding="utf-8")
+    profiles.save_snapshot("studio03",100)
     payload = {**request(), "account_profile": "studio03"}
     posted = client.post("/v1/music/jobs", headers=headers, json=payload)
     assert posted.status_code == 202
@@ -247,6 +249,7 @@ def test_music_account_eligibility_contract(environment):
 
 def test_music_session_presence_does_not_prove_eligible(environment):
     client, headers = environment
+    (profiles.session_dir("default")/"session.json").write_text("{}", encoding="utf-8")
     profiles.save_snapshot("default", 900)
     result = client.get("/v1/music/accounts", headers=headers).json()
     p = next(x for x in result["profiles"] if x["profile"] == "default")
@@ -259,7 +262,9 @@ def test_uncertain_music_job_only_blocks_own_profile(environment):
     client, headers = environment
     studio=profiles.session_dir("studio02")
     studio.mkdir(parents=True)
-    (studio/"session.json").write_text("{}", encoding="utf-8")
+    (studio/"session.json").write_text(json.dumps({
+        "expires_at":__import__("time").time()+3600}), encoding="utf-8")
+    profiles.save_snapshot("studio02",100)
     first={**request(), "account_profile":"default"}
     second={**request(), "account_profile":"studio02"}
     jid1=client.post("/v1/music/jobs",headers=headers,json=first).json()["job_id"]
