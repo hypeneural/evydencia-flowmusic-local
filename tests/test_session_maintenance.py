@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
@@ -25,8 +26,9 @@ class SessionMaintenanceTest(unittest.TestCase):
             (datetime.now(timezone.utc)-timedelta(minutes=3)).timestamp(),
             "refresh_token":"dummy-not-sent-to-provider"}),encoding="utf-8")
         database=self.root/"data"/"jobs.db"
-        with sqlite3.connect(database) as conn:
+        with closing(sqlite3.connect(database)) as conn:
             conn.execute("CREATE TABLE jobs(run_mode TEXT,state TEXT,account_profile TEXT)")
+            conn.commit()
         self.patchers=[
             patch.object(profiles,"DATA",self.root/"data"),
             patch.object(profiles,"PROFILES",self.root/"data"/"flowmusic-profiles"),
@@ -58,9 +60,10 @@ class SessionMaintenanceTest(unittest.TestCase):
 
     def test_queued_live_job_or_uncertain_job_blocks_refresh(self):
         for state in ("queued","needs_review"):
-            with sqlite3.connect(self.module.DB) as conn:
+            with closing(sqlite3.connect(self.module.DB)) as conn:
                 conn.execute("DELETE FROM jobs")
                 conn.execute("INSERT INTO jobs VALUES('cli',?,'default')",(state,))
+                conn.commit()
             self.assertEqual(self.module.decide("default")["status"],
                              "blocked_by_generation_or_review")
 
