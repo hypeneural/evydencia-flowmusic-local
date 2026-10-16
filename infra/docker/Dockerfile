@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # FlowMusic Supabase CLI lab, isolated from the Asterisk host packages.
 FROM node:22.14.0-bookworm-slim AS node
 FROM python:3.13-slim-bookworm
