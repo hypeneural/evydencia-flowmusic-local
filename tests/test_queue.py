@@ -292,3 +292,17 @@ def test_music_opt_in_policy_does_not_change_existing_jobs(environment):
     assert current["eligible"] is True
     denied=client.post("/v1/music/accounts/default/routing",json={"enabled":False,"auto_select":False})
     assert denied.status_code==401
+
+
+def test_session_maintenance_lock_blocks_claim_without_state_change(environment):
+    from app.session_maintenance_lock import lock_maintenance
+    client, h = environment
+    item=request()
+    jid=client.post("/v1/music/jobs",headers=h,json=item).json()["job_id"]
+    path=api.DATA/"session-maintenance"/"music-session-maintenance.lock"
+    with lock_maintenance(path):
+        assert queue.claim() is None
+        assert client.get(f"/v1/music/jobs/{jid}",headers=h).json()["status"]=="queued"
+    claimed=queue.claim()
+    assert claimed is not None and claimed["id"]==jid
+    queue.finish(jid,"needs_review")
