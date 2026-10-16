@@ -212,6 +212,18 @@ def generate(args: argparse.Namespace) -> None:
     if not args.prompt or len(args.prompt) < 3:
         raise RuntimeError("A music prompt is required")
     session_exists()
+    # During unattended LIVE generation, the pinned upstream's default
+    # getSession() can launch browser login after a failed refresh. Check
+    # the real session with interactive:false BEFORE committing the ledger
+    # or touching the provider. If expired/revoked, fail without a POST.
+    node = shutil.which("node")
+    silent_auth = (
+        "import { getSession } from './vendor/flowmusic-cli/src/lib/auth.mjs'; "
+        "await getSession({ interactive: false });"
+    )
+    auth_checked = command([node, "--input-type=module", "--eval", silent_auth], timeout=100)
+    if auth_checked.returncode:
+        raise RuntimeError("music_session_unavailable_manual_login_required")
     harden_upstream_retry()
     LEDGER.mkdir(parents=True, exist_ok=True)
     output = OUTPUT / args.request_id
