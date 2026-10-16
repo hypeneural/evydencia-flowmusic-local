@@ -21,7 +21,7 @@ COPY . .
 RUN groupadd --gid 1001 music && useradd -m --uid 1001 --gid 1001 music \
     && mkdir -p /app/data && chown 1001:1001 /app/data
 USER 1001:1001
-ENV HOME=/home/music
+ENV HOME=/app/data/home XDG_CONFIG_HOME=/app/data/config XDG_CACHE_HOME=/app/data/cache XDG_DATA_HOME=/app/data/share
 EXPOSE 8765
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["python","-m","uvicorn","app.main:app","--host","0.0.0.0","--port","8765","--workers","1","--no-access-log"]
