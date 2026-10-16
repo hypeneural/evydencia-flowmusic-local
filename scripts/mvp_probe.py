@@ -163,6 +163,11 @@ def harden_upstream_retry() -> None:
         raise RuntimeError("Unknown upstream rate-limit retry logic: manual review required")
     if safe not in body or safe_retryable not in body:
         raise RuntimeError("Unsafe upstream POST retry logic")
+    # In Linux containers the pinned upstream is patched at Docker BUILD
+    # time and the root filesystem is intentionally read-only. Never try
+    # to rewrite a vendor file while claiming a live Music job.
+    if source.read_text(encoding="utf-8") == body:
+        return
     temporary = source.with_suffix(".mjs.tmp")
     temporary.write_text(body, encoding="utf-8")
     os.replace(temporary, source)
