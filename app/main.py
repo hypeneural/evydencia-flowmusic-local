@@ -78,7 +78,7 @@ class MusicRequest(BaseModel):
                 raise ValueError("title must be on one line")
         # The public Flow Media gateway rejects payloads above 16 KiB.
         # Leave headroom for JSON escaping/headers and future fields.
-        body = json.dumps(self.model_dump(), ensure_ascii=False, separators=(",", ":"))
+        body = json.dumps(self.model_dump(), ensure_ascii=True, separators=(",", ":"))
         if len(body.encode("utf-8")) > 14 * 1024:
             raise ValueError("music payload exceeds safe gateway limit")
         return self
