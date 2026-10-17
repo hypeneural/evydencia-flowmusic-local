@@ -278,6 +278,16 @@ def generate(args: argparse.Namespace) -> None:
     argv = [node, str(ENTRY), "gen", args.prompt, "--model", args.model,
             "--length", str(args.seconds), "--format", args.format,
             "--out", str(output), "--json"]
+    if args.instrumental and args.lyrics:
+        raise ValueError("instrumental=true conflicts with custom lyrics")
+    if args.lyrics and args.lyrics.lstrip().startswith("@"):
+        raise ValueError("Only inline lyrics are allowed")
+    if args.title and args.title.lstrip().startswith("@"):
+        raise ValueError("Only inline titles are allowed")
+    if args.lyrics:
+        argv.extend(["--lyrics", args.lyrics])
+    if args.title:
+        argv.extend(["--title", args.title])
     if args.instrumental:
         argv.append("--instrumental")
     begin = time.monotonic()
@@ -313,6 +323,8 @@ def main() -> int:
     parser.add_argument("--profile", default="default", help="Local account alias; no automatic failover")
     parser.add_argument("--request-id")
     parser.add_argument("--prompt")
+    parser.add_argument("--lyrics", default=None, help="Inline text only; @file references are forbidden")
+    parser.add_argument("--title", default=None, help="Optional music title")
     parser.add_argument("--model", default="Lyria 3.5")
     parser.add_argument("--seconds", type=int, default=120)
     parser.add_argument("--format", choices=["wav", "m4a", "mp3"], default="wav")
