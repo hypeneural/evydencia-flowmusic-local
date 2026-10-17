@@ -12,7 +12,6 @@ def test_inline_lyrics_and_title_forwarded_to_probe(monkeypatch):
     monkeypatch.setattr(queue.profiles, "invalidate_snapshot", lambda profile: None)
     monkeypatch.setattr(queue, "verified_artifacts", lambda _id, profile: [{"sha256": "a" * 64}])
     monkeypatch.setattr(queue, "finish", lambda *args, **kwargs: calls.append(("finished", args, kwargs)))
-    monkeypatch.setattr(queue, "event", lambda *args, **kwargs: None)
     record = {
         "id": "fixture-job",
         "request_id": "natal-test-001",
@@ -33,7 +32,7 @@ def test_inline_lyrics_and_title_forwarded_to_probe(monkeypatch):
         calls.append(("command", command))
         return SimpleNamespace(returncode=0)
 
-    queue.process(record, runner=fake_runner)
+    queue.execute(record, runner=fake_runner)
     command = next(item[1] for item in calls if item[0] == "command")
     assert command[command.index("--lyrics") + 1] == "[Verse]\nBom dia, Ana"
     assert command[command.index("--title") + 1] == "A Magia do Natal"
