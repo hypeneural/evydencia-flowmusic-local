@@ -44,3 +44,53 @@ def test_lyrics_are_inline_and_not_instrumental():
     with pytest.raises(ValueError):
         api.MusicRequest(**{**basic, "duration_seconds": 25})
     assert api.MusicRequest(**basic).lyrics == "Bom dia"
+
+
+@pytest.mark.parametrize("changed", [
+    {"lyrics": "@/etc/passwd"},
+    {"title": "  @/tmp/private"},
+    {"lyrics": " "},
+    {"title": "Hello\nworld"},
+    {"instrumental": True},
+    {"lyrics": "Hello\u0000world"},
+])
+def test_invalid_lyrics_contract_fails_before_provider(changed):
+    from pydantic import ValidationError
+    valid = {
+        "request_id": "offline-natal-001",
+        "prompt": "Cheerful Christmas pop",
+        "lyrics": "[Chorus]\nBom dia, Ana",
+        "title": "Magia do Natal",
+    }
+    with pytest.raises(ValidationError):
+        api.MusicRequest(**{**valid, **changed})
+
+
+def test_gateway_body_limit_rejected_without_truncating_lyrics():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="gateway"):
+        api.MusicRequest(
+            request_id="offline-natal-size",
+            prompt="Happy Brazilian Christmas",
+            lyrics="á" * 10000,
+        )
+
+
+def test_probe_rejects_local_file_before_lock_or_login(tmp_path, monkeypatch):
+    from argparse import Namespace
+    from scripts import mvp_probe as probe
+
+    # If auth is attempted, the validator ran too late.
+    monkeypatch.setattr(
+        probe, "session_exists",
+        lambda: pytest.fail("must reject invalid lyrics before accessing provider session"),
+    )
+    monkeypatch.setattr(probe, "LEDGER", tmp_path / "ledger")
+    args = Namespace(
+        approve_live=True, request_id="offline-natal-file", prompt="Joyful Christmas",
+        title="Safe title", lyrics=" @/private/lyrics.txt",
+        instrumental=False,
+    )
+    with pytest.raises(ValueError, match="inline"):
+        probe.generate(args)
+    assert not (tmp_path / "ledger").exists()
