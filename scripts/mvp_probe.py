@@ -239,6 +239,20 @@ def generate(args: argparse.Namespace) -> None:
         raise RuntimeError("request-id must contain 3-80 letters, numbers, dots, _ or -")
     if not args.prompt or len(args.prompt) < 3:
         raise RuntimeError("A music prompt is required")
+    # Pure argument checks MUST precede auth, credit invalidation and the
+    # durable submitting ledger. Otherwise an invalid lyric can orphan a lock.
+    if args.instrumental and args.lyrics is not None:
+        raise ValueError("instrumental=true conflicts with custom lyrics")
+    for label in ("lyrics", "title"):
+        value = getattr(args, label, None)
+        if value is None:
+            continue
+        if not value.strip() or value.lstrip().startswith("@"):
+            raise ValueError(f"{label} must be nonempty inline text")
+        if any(ord(char) < 32 and char not in ("\n", "\r", "\t") for char in value):
+            raise ValueError(f"{label} contains control characters")
+        if label == "title" and ("\n" in value or "\r" in value):
+            raise ValueError("title must be one line")
     session_exists()
     # During unattended LIVE generation, the pinned upstream's default
     # getSession() can launch browser login after a failed refresh. Check
@@ -278,12 +292,6 @@ def generate(args: argparse.Namespace) -> None:
     argv = [node, str(ENTRY), "gen", args.prompt, "--model", args.model,
             "--length", str(args.seconds), "--format", args.format,
             "--out", str(output), "--json"]
-    if args.instrumental and args.lyrics:
-        raise ValueError("instrumental=true conflicts with custom lyrics")
-    if args.lyrics and args.lyrics.lstrip().startswith("@"):
-        raise ValueError("Only inline lyrics are allowed")
-    if args.title and args.title.lstrip().startswith("@"):
-        raise ValueError("Only inline titles are allowed")
     if args.lyrics:
         argv.extend(["--lyrics", args.lyrics])
     if args.title:
