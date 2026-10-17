@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +58,31 @@ class MusicRequest(BaseModel):
     output_format: str = Field(default="wav", pattern=r"^(wav|m4a|mp3)$")
     approve_live: bool = False
     account_profile: str = Field(default="default", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+
+    @model_validator(mode="after")
+    def validate_inline_music(self):
+        """Fail before mock/live queue and before any paid provider submission."""
+        if self.instrumental and self.lyrics is not None:
+            raise ValueError("instrumental=true conflicts with lyrics")
+        for label, value in (("title", self.title), ("lyrics", self.lyrics)):
+            if value is None:
+                continue
+            if not value.strip():
+                raise ValueError(f"{label} cannot be empty")
+            # The pinned CLI treats a leading @ as a file reference.
+            if value.lstrip().startswith("@"):
+                raise ValueError(f"{label} must be inline text, not @file")
+            if any(ord(char) < 32 and char not in ("\n", "\r", "\t") for char in value):
+                raise ValueError(f"{label} contains control characters")
+            if label == "title" and ("\n" in value or "\r" in value):
+                raise ValueError("title must be on one line")
+        # The public Flow Media gateway rejects payloads above 16 KiB.
+        # Leave headroom for JSON escaping/headers and future fields.
+        body = json.dumps(self.model_dump(), ensure_ascii=False, separators=(",", ":"))
+        if len(body.encode("utf-8")) > 14 * 1024:
+            raise ValueError("music payload exceeds safe gateway limit")
+        return self
+
 
 @contextmanager
 def db():
