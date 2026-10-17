@@ -123,8 +123,14 @@ def create_live(req: Any, digest: str, payload: str) -> dict:
         raise api.HTTPException(403, "Explicit approve_live=true required")
     if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", req.request_id):
         raise api.HTTPException(422, "request_id is incompatible with pinned MVP probe")
-    if req.lyrics:
-        raise api.HTTPException(422, "Live custom lyrics require a reviewed adapter; not silently ignored")
+    # The pinned CLI interprets a leading @ as a local file reference.
+    # Only inline customer-facing lyrics may cross this API boundary.
+    if req.instrumental and req.lyrics:
+        raise api.HTTPException(422, "instrumental=true conflicts with custom lyrics")
+    if req.lyrics and req.lyrics.lstrip().startswith("@"):
+        raise api.HTTPException(422, "Only inline lyrics are allowed")
+    if req.title and req.title.lstrip().startswith("@"):
+        raise api.HTTPException(422, "Only inline titles are allowed")
     try:
         profile = profiles.validate(req.account_profile)
     except ValueError:
@@ -289,6 +295,10 @@ def execute(record: dict, *, runner=None) -> None:
         "--seconds", str(req.get("duration_seconds", 120)),
         "--format", req.get("output_format", "wav"), "--approve-live",
     ]
+    if req.get("lyrics"):
+        command.extend(["--lyrics", req["lyrics"]])
+    if req.get("title"):
+        command.extend(["--title", req["title"]])
     if req.get("instrumental"):
         command.append("--instrumental")
     stage="provider"
