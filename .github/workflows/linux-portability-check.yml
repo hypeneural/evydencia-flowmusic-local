@@ -1,7 +1,7 @@
 name: music-linux-syntax
 on:
   pull_request:
-    paths: ['app/**','scripts/mvp_probe.py','infra/docker/**','.dockerignore','.github/workflows/linux-portability-check.yml']
+    paths: ['app/**','scripts/**','tests/test_linux_music_session_persistence.py','infra/docker/**','.dockerignore','.github/workflows/linux-portability-check.yml']
   push:
     branches: ['feat/contabo-linux-music-20261016']
 jobs:
@@ -13,3 +13,5 @@ jobs:
         with: {python-version: '3.13'}
       - run: python -m compileall -q app scripts
       - run: bash -n scripts/linux/login-music.sh
+      - name: Test Linux login/session persistence and orphan process cleanup (offline)
+        run: python -m unittest discover -s tests -p 'test_linux_music_session_persistence.py' -v
