@@ -80,7 +80,7 @@ class SessionMaintenanceTest(unittest.TestCase):
 
     def test_after_human_login_failed_account_check_returns_failure_not_false_ready(self):
         with patch.object(self.module,"_probe_once",return_value=False), \
-             patch.object(self.module,"_busy",return_value=False), \\
+             patch.object(self.module,"_busy",return_value=False), \
              patch.object(self.module.sys,"argv",[
                  "maintain-music-sessions.py","--profile","default","--execute",
                  "--after-human-login"]):
