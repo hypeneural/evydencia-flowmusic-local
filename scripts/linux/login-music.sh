@@ -26,12 +26,15 @@ xpid=$!
 cleanup() {
   local rc=$?
   if [ "$rc" -ne 0 ] && [ -f "$previous" ]; then
-    # Failure during browser auth must never replace a prior working
-    # refresh-token chain. Restore only while the worker is stopped.
-    cp -p -- "$previous" "$session" ||
-      echo 'P0 could not restore prior session: manual review required'
+    # Do NOT erase the only preserved refresh chain if recovery fails.
+    if ! cp -p -- "$previous" "$session"; then
+      echo 'P0 prior session restore failed: preserved recovery copy in profile; manual review required'
+    else
+      rm -f -- "$previous"
+    fi
+  elif [ "$rc" -eq 0 ]; then
+    rm -f -- "$previous"
   fi
-  rm -f -- "$previous"
   if [ -n "${vpid:-}" ]; then kill "$vpid" 2>/dev/null || true; fi
   kill "$xpid" 2>/dev/null || true
 }
