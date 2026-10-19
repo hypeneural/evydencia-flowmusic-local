@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -113,7 +114,8 @@ def _probe_once(alias: str) -> bool:
     child=subprocess.Popen([sys.executable,str(PROBE),"--mode","account","--profile",alias],
                            cwd=str(ROOT),stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                           creationflags=flags)
+                           creationflags=flags,
+                           start_new_session=(os.name!="nt"))
     try:
         return child.wait(timeout=300)==0
     except subprocess.TimeoutExpired:
@@ -125,11 +127,28 @@ def _probe_once(alias: str) -> bool:
             except (OSError,subprocess.TimeoutExpired):
                 child.kill()
         else:
-            child.kill()
+            # The probe spawns Node/Chrome descendants. Terminating only the
+            # Python parent may leave a child rotating the Supabase refresh
+            # token after the maintenance lock is released. We own the entire
+            # newly created process group (start_new_session=True).
+            try:
+                os.killpg(child.pid,signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            # Kill remaining descendants even if Python exited already.
+            try:
+                os.killpg(child.pid,signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         try:
             child.wait(timeout=10)
         except (OSError,subprocess.TimeoutExpired):
-            pass
+            child.kill()
+            child.wait()
         return False
 
 
