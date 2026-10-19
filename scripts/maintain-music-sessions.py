@@ -198,9 +198,13 @@ def main() -> int:
     except BlockingIOError:
         print(json.dumps({"ok":False,"code":"maintenance_already_running"}))
         return 2
-    print(json.dumps({"ok":True,"mode":"execute" if args.execute else "dry_run",
+    verified=(not args.after_human_login or
+              len(results)==1 and results[0]["status"]=="refreshed_and_checked")
+    print(json.dumps({"ok":verified,"mode":"execute" if args.execute else "dry_run",
                       "profiles":results},ensure_ascii=False,indent=2))
-    return 0
+    # The maintenance timer tolerates reauth/cooldown. Explicit human
+    # onboarding MUST fail closed if the fresh account probe did not pass.
+    return 0 if verified else 2
 
 
 if __name__=="__main__":
