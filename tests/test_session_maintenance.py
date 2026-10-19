@@ -67,6 +67,25 @@ class SessionMaintenanceTest(unittest.TestCase):
             self.assertEqual(self.module.decide("default")["status"],
                              "blocked_by_generation_or_review")
 
+    def test_after_human_login_is_one_safe_account_check_even_during_old_cooldown(self):
+        self.module._write_attempt("default","failed")
+        self.assertEqual(self.module.decide("default")["status"],"cooldown")
+        self.assertEqual(
+            self.module.decide("default",after_human_login=True)["status"],
+            "eligible_for_existing_cli_account_check")
+        with patch.object(self.module,"_busy",return_value=True):
+            self.assertEqual(
+                self.module.decide("default",after_human_login=True)["status"],
+                "blocked_by_generation_or_review")
+
+    def test_after_human_login_failed_account_check_returns_failure_not_false_ready(self):
+        with patch.object(self.module,"_probe_once",return_value=False), \
+             patch.object(self.module,"_busy",return_value=False), \
+             patch.object(self.module.sys,"argv",[
+                 "maintain-music-sessions.py","--profile","default","--execute",
+                 "--after-human-login"]):
+            self.assertEqual(self.module.main(),2)
+
     def test_rotating_refresh_chain_is_exclusive(self):
         with lock_maintenance(self.module.LOCK):
             self.assertTrue(maintenance_active(self.module.LOCK))

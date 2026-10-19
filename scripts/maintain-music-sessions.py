@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -71,7 +72,7 @@ def _busy(alias: str) -> bool:
         return True
 
 
-def decide(alias: str) -> dict:
+def decide(alias: str, *, after_human_login: bool = False) -> dict:
     profiles.validate(alias)
     meta=profiles.session_public_metadata(alias)
     credits=profiles.credit_snapshot(alias)
@@ -94,6 +95,11 @@ def decide(alias: str) -> dict:
         state="reauth_required"
     elif _busy(alias):
         state="blocked_by_generation_or_review"
+    elif after_human_login:
+        # A successful interactive login is an explicit human-triggered reason
+        # to verify the newly written token chain immediately, even when an
+        # earlier pre-login attempt was in cooldown or credits looked fresh.
+        state="eligible_for_existing_cli_account_check"
     elif retry_later:
         state="cooldown"
     elif due or credits["stale"]:
@@ -113,7 +119,8 @@ def _probe_once(alias: str) -> bool:
     child=subprocess.Popen([sys.executable,str(PROBE),"--mode","account","--profile",alias],
                            cwd=str(ROOT),stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                           creationflags=flags)
+                           creationflags=flags,
+                           start_new_session=(os.name!="nt"))
     try:
         return child.wait(timeout=300)==0
     except subprocess.TimeoutExpired:
@@ -125,11 +132,28 @@ def _probe_once(alias: str) -> bool:
             except (OSError,subprocess.TimeoutExpired):
                 child.kill()
         else:
-            child.kill()
+            # The probe spawns Node/Chrome descendants. Terminating only the
+            # Python parent may leave a child rotating the Supabase refresh
+            # token after the maintenance lock is released. We own the entire
+            # newly created process group (start_new_session=True).
+            try:
+                os.killpg(child.pid,signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            # Kill remaining descendants even if Python exited already.
+            try:
+                os.killpg(child.pid,signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         try:
             child.wait(timeout=10)
         except (OSError,subprocess.TimeoutExpired):
-            pass
+            child.kill()
+            child.wait()
         return False
 
 
@@ -139,7 +163,11 @@ def main() -> int:
     parser.add_argument("--all",action="store_true",help="check each locally registered profile")
     parser.add_argument("--execute",action="store_true",
                         help="run one authorized CLI account/credits check per eligible profile")
+    parser.add_argument("--after-human-login",action="store_true",
+                        help="single explicit check of newly saved human login; skip cooldown only when safe")
     args=parser.parse_args()
+    if args.after_human_login and (not args.execute or args.all):
+        parser.error("--after-human-login requires --execute and one --profile")
     names=([p["profile"] for p in profiles.list_profiles()] if args.all
            else [profiles.validate(args.profile)])
     results=[]
@@ -150,7 +178,7 @@ def main() -> int:
     try:
         with lock_maintenance(LOCK):
             for alias in names:
-                before=decide(alias)
+                before=decide(alias,after_human_login=args.after_human_login)
                 if args.execute and before["status"]=="eligible_for_existing_cli_account_check":
                     if _busy(alias):
                         before["status"]="blocked_by_generation_or_review"
@@ -170,9 +198,13 @@ def main() -> int:
     except BlockingIOError:
         print(json.dumps({"ok":False,"code":"maintenance_already_running"}))
         return 2
-    print(json.dumps({"ok":True,"mode":"execute" if args.execute else "dry_run",
+    verified=(not args.after_human_login or
+              len(results)==1 and results[0]["status"]=="refreshed_and_checked")
+    print(json.dumps({"ok":verified,"mode":"execute" if args.execute else "dry_run",
                       "profiles":results},ensure_ascii=False,indent=2))
-    return 0
+    # The maintenance timer tolerates reauth/cooldown. Explicit human
+    # onboarding MUST fail closed if the fresh account probe did not pass.
+    return 0 if verified else 2
 
 
 if __name__=="__main__":
