@@ -50,6 +50,13 @@
     if (profile.recent_account_check) {
       cell.appendChild(el("div", "muted", "Saldo verificado recentemente"));
     }
+    const authActions = {
+      run_serialized_cli_account_check: "Gestor: renovar sessão e conferir saldo na VPS",
+      interactive_login_required: "Gestor: entrar nesta conta Google na VPS",
+      refresh_credit_snapshot_when_idle: "Gestor: atualizar saldo com a fila ociosa"
+    };
+    const advice = authActions[profile.next_auth_action];
+    if (advice) cell.appendChild(el("div", "muted", advice));
     tr.appendChild(cell);
     const routing = document.createElement("td");
     routing.appendChild(el("span", "pill " + (profile.eligible === true ? "ok" : "warn"),
@@ -98,8 +105,10 @@
     byId("queue-detail").textContent = reviewing
       ? reviewing + " tarefa(s) precisam de revisão"
       : pending + " tarefa(s) aguardando";
+    const readyCount = items.filter(p => p.eligible === true && p.auto_select === true).length;
     byId("music-live-state").textContent = list.live_enabled
-      ? "Motor LIVE habilitado. Elegibilidade mostrada é apenas pré-checagem local."
+      ? readyCount + " de " + items.length + " conta(s) autorizadas e pré-aptas para novos pedidos. " +
+        "Este painel apenas consulta; o provedor confirma a sessão na geração."
       : "Motor de geração LIVE desligado: nenhuma conta pode ser enviada à fila real.";
     byId("last-update").textContent = "Painel atualizado: " + date(new Date().toISOString());
     byId("metrics").hidden = false;

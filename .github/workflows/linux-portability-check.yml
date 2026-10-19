@@ -1,15 +1,17 @@
 name: music-linux-syntax
 on:
   pull_request:
-    paths: ['app/**','scripts/mvp_probe.py','infra/docker/**','.dockerignore','.github/workflows/linux-portability-check.yml']
+    paths: ['app/**','scripts/mvp_probe.py','tests/**','infra/docker/**','.dockerignore','.github/workflows/linux-portability-check.yml']
   push:
     branches: ['feat/contabo-linux-music-20261016']
 jobs:
-  syntax:
+  syntax-and-offline-contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.13'}
-      - run: python -m compileall -q app scripts
+      - run: python -m compileall -q app scripts tests
       - run: bash -n scripts/linux/login-music.sh
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests/test_music_lyrics_contract.py tests/test_queue.py tests/test_api.py -q
