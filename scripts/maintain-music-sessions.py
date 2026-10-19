@@ -72,7 +72,7 @@ def _busy(alias: str) -> bool:
         return True
 
 
-def decide(alias: str) -> dict:
+def decide(alias: str, *, after_human_login: bool = False) -> dict:
     profiles.validate(alias)
     meta=profiles.session_public_metadata(alias)
     credits=profiles.credit_snapshot(alias)
@@ -95,6 +95,11 @@ def decide(alias: str) -> dict:
         state="reauth_required"
     elif _busy(alias):
         state="blocked_by_generation_or_review"
+    elif after_human_login:
+        # A successful interactive login is an explicit human-triggered reason
+        # to verify the newly written token chain immediately, even when an
+        # earlier pre-login attempt was in cooldown or credits looked fresh.
+        state="eligible_for_existing_cli_account_check"
     elif retry_later:
         state="cooldown"
     elif due or credits["stale"]:
@@ -158,7 +163,11 @@ def main() -> int:
     parser.add_argument("--all",action="store_true",help="check each locally registered profile")
     parser.add_argument("--execute",action="store_true",
                         help="run one authorized CLI account/credits check per eligible profile")
+    parser.add_argument("--after-human-login",action="store_true",
+                        help="single explicit check of newly saved human login; skip cooldown only when safe")
     args=parser.parse_args()
+    if args.after_human_login and (not args.execute or args.all):
+        parser.error("--after-human-login requires --execute and one --profile")
     names=([p["profile"] for p in profiles.list_profiles()] if args.all
            else [profiles.validate(args.profile)])
     results=[]
@@ -169,7 +178,7 @@ def main() -> int:
     try:
         with lock_maintenance(LOCK):
             for alias in names:
-                before=decide(alias)
+                before=decide(alias,after_human_login=args.after_human_login)
                 if args.execute and before["status"]=="eligible_for_existing_cli_account_check":
                     if _busy(alias):
                         before["status"]="blocked_by_generation_or_review"
