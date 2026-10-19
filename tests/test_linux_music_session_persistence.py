@@ -23,7 +23,7 @@ class MusicSessionPersistenceTests(unittest.TestCase):
         script="\n".join(lines)
         for marker in (
             'FLOWMUSIC_HOME="$d"',
-            'previous="$d/.session-prelogin-$$"',
+            'previous="$d/.session-prelogin-${BASHPID}"',
             'cp -p -- "$session" "$previous"',
             'MUSIC_LOGIN_DIFFERENT_GOOGLE_IDENTITY',
             'MUSIC_LOGIN_NOT_PERSISTED',
