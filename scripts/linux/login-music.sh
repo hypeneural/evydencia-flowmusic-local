@@ -33,4 +33,27 @@ echo 'Close the Google login Chrome window. The upstream will perform a LOCAL he
 # after the user closes it, it reads the authorized session into its own
 # Supabase refresh chain. The CDP port remains inside the ephemeral container.
 timeout -k 15s 1080s node --input-type=module --eval "import { login } from './vendor/flowmusic-cli/src/lib/auth.mjs'; await login({timeoutS:900});"
-echo 'Music session saved; query Music account read-only before enabling CLI LIVE.'
+# Never claim successful login merely because upstream returned exit 0.
+# Inspect the *actual persistent bind mount*, without printing session JSON.
+FLOW_LOGIN_VERIFIED_ALIAS="$alias" python3 - <<'PY'
+import json,os,stat
+from app import profiles
+alias=os.environ["FLOW_LOGIN_VERIFIED_ALIAS"]
+path=profiles.session_dir(alias)/"session.json"
+if path.is_symlink() or not path.is_file():
+    raise SystemExit("MUSIC_LOGIN_NOT_PERSISTED: session.json missing; no routing enabled")
+if not path.resolve().is_relative_to(profiles.DATA.resolve()):
+    raise SystemExit("MUSIC_LOGIN_NOT_PERSISTED: session outside persistent volume")
+if not 0 < path.stat().st_size <= 256*1024:
+    raise SystemExit("MUSIC_LOGIN_NOT_PERSISTED: invalid session file size")
+# The newly saved refresh token is a secret. Restrict it on disk before
+# subsequent CLI use. Never emit its bytes, email, hash or an authentication URL.
+os.chmod(path,0o600)
+meta=profiles.session_public_metadata(alias)
+if not meta["refresh_available"] or meta["session_status"] in ("not_connected","invalid_file"):
+    raise SystemExit("MUSIC_LOGIN_INCOMPLETE: persisted file lacks a usable refresh chain")
+print(json.dumps({"profile":alias,"session_persisted":True,
+    "refresh_present":True,"session_status":meta["session_status"],
+    "generation_submitted":False}))
+PY
+echo 'Music session persisted in /app/data; run stackctl flow-media session-check music ALIAS (GET only) before auto-selection.'
