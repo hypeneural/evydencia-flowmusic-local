@@ -12,7 +12,7 @@ chmod 0700 "$d"
 # the existing per-alias refresh-token chain until the new identity has
 # been verified; never permit an accidental Google account switch.
 session="$d/session.json"
-previous="$d/.session-prelogin-$"
+previous="$d/.session-prelogin-${BASHPID}"
 if [ -L "$session" ]; then echo 'P0 symlink_session_file'; exit 2; fi
 if [ -f "$session" ]; then
   cp -p -- "$session" "$previous"
